@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite:*)",
+      "Bash(npm run:*)",
+      "Bash(python -c \" import sys, json data = sys.stdin.read\\(\\) lines = data.strip\\(\\).split\\('\\\\n'\\) for line in lines[-15:]: try: obj = json.loads\\(line\\) role = obj.get\\('role', ''\\) content = obj.get\\('content', ''\\) if isinstance\\(content, list\\): for c in content: if isinstance\\(c, dict\\) and c.get\\('type'\\) == 'text': print\\(f'[{role}]: {c[\\\\\"text\\\\\"][:400]}'\\) elif isinstance\\(content, str\\): print\\(f'[{role}]: {content[:400]}'\\) except: pass \")",
+      "Bash(python -c ':*)",
+      "Bash(curl -s \"https://api.pokemontcg.io/v2/cards?q=name:Radiant%20Charizard%20set.id:crz&select=id,name,set,rarity,hp,attacks,tcgplayer\")",
+      "WebFetch(domain:www.tcgplayer.com)",
+      "WebFetch(domain:limitlesstcg.com)",
+      "WebFetch(domain:pokemontcg.guru)",
+      "WebFetch(domain:api.pokemontcg.io)"
+    ]
+  }
+}
