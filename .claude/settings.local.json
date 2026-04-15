@@ -9,7 +9,9 @@
       "WebFetch(domain:www.tcgplayer.com)",
       "WebFetch(domain:limitlesstcg.com)",
       "WebFetch(domain:pokemontcg.guru)",
-      "WebFetch(domain:api.pokemontcg.io)"
+      "WebFetch(domain:api.pokemontcg.io)",
+      "WebFetch(domain:pkmncards.com)",
+      "WebFetch(domain:www.tcgcollector.com)"
     ]
   }
 }

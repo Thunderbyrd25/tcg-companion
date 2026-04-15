@@ -4,6 +4,7 @@ import { ALL_SETS } from '../data/sets';
 import { searchCards, fetchSetsMetadata } from '../utils/api';
 import { cardKey, parseRawLines, buildSectionMap, supertypeToSection } from '../utils/cards';
 import { useToast } from '../components/Toast';
+import { ERA_FORMATS } from '../data/eras';
 
 const FORMATS = ['Standard', 'Expanded', 'GLC', 'Era', 'Custom'];
 
@@ -12,9 +13,22 @@ const EXPANDED_ERAS = new Set(['ME','SV','SWSH','SM','XY','BW']);
 // GLC bans rule box Pokémon. The API uses mixed casing across eras.
 const GLC_RULE_BOX = new Set(['ex','EX','GX','V','VMAX','VSTAR','Radiant','ACE SPEC','VUNION','MEGA','Tag Team','SP']);
 
-function getSetsForFormat(format) {
+function getSetsForFormat(format, eraCode) {
   if (format === 'Standard') return ALL_SETS.filter(s => STANDARD_SET_CODES.has(s.code));
   if (format === 'Expanded' || format === 'GLC') return ALL_SETS.filter(s => EXPANDED_ERAS.has(s.era));
+  if (format === 'Era' && eraCode) {
+    const parts = eraCode.split('-');
+    const fromCode = parts[0].trim().toUpperCase();
+    const toCode = (parts[1] || parts[0]).trim().toUpperCase();
+    const allCodes = ALL_SETS.map(s => s.code);
+    const fromIdx = allCodes.indexOf(fromCode);
+    const toIdx = allCodes.indexOf(toCode);
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const min = Math.min(fromIdx, toIdx);
+      const max = Math.max(fromIdx, toIdx);
+      return ALL_SETS.filter((_, i) => i >= min && i <= max);
+    }
+  }
   return ALL_SETS;
 }
 
@@ -24,6 +38,7 @@ export default function DeckBuilder({ onBack }) {
   const [setsMeta, setSetsMeta] = useState({});
 
   const [builderFormat, setBuilderFormat] = useState('Standard');
+  const [eraCode, setEraCode] = useState(ERA_FORMATS[0].code);
   const [deckName, setDeckName] = useState('New Deck');
   const [builtCards, setBuiltCards] = useState([]);
 
@@ -132,7 +147,7 @@ export default function DeckBuilder({ onBack }) {
     dispatch({
       type: 'SAVE_DECK', deck: {
         id: Date.now(), name: deckName.trim() || 'New Deck',
-        format: builderFormat, eraLabel: '', notes: '',
+        format: builderFormat, eraLabel: builderFormat === 'Era' ? eraCode : '', notes: '',
         rawCards: builtCards.map(({ name, setCode, num, qty }) => ({ name, setCode, num, qty })),
         raw, sectionMap: buildSectionMap(raw),
         ownedMap: {}, blingSel: {}, isBuyList: false,
@@ -157,7 +172,7 @@ export default function DeckBuilder({ onBack }) {
   for (const c of builtCards) totals[c.section || 'Other'] = (totals[c.section || 'Other'] || 0) + c.qty;
   const totalBuilt = builtCards.reduce((s, c) => s + c.qty, 0);
 
-  const legalSets = getSetsForFormat(builderFormat);
+  const legalSets = getSetsForFormat(builderFormat, eraCode);
   const legalSetIds = useMemo(() => new Set(legalSets.map(s => s.id)), [legalSets]);
 
   function isCardLegal(card) {
@@ -187,7 +202,7 @@ export default function DeckBuilder({ onBack }) {
         {/* LEFT */}
         <div>
           {/* Format picker */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: builderFormat === 'Era' ? 8 : 14, flexWrap: 'wrap' }}>
             {FORMATS.map(f => (
               <button key={f} onClick={() => { setBuilderFormat(f); setSelectedSet(null); setResults([]); }}
                 className={`chip ${builderFormat === f ? 'on' : ''}`}>{f}</button>
@@ -198,6 +213,26 @@ export default function DeckBuilder({ onBack }) {
               </span>
             )}
           </div>
+          {builderFormat === 'Era' && (
+            <div style={{ marginBottom: 14 }}>
+              <select
+                value={eraCode}
+                onChange={e => { setEraCode(e.target.value); setSelectedSet(null); setResults([]); }}
+                style={{ width: '100%', padding: '8px 10px', background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--text)', fontSize: 13, fontFamily: "'Outfit',sans-serif" }}
+              >
+                {ERA_FORMATS.map(ef => (
+                  <option key={ef.code} value={ef.code}>
+                    {ef.label}{ef.worlds ? ' ⭐' : ''}
+                  </option>
+                ))}
+              </select>
+              {ERA_FORMATS.find(ef => ef.code === eraCode)?.notes && (
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, paddingLeft: 2 }}>
+                  Note: {ERA_FORMATS.find(ef => ef.code === eraCode).notes}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Search bar (global or within set header) */}
           {!isInSet && (

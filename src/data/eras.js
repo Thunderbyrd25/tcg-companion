@@ -42,9 +42,9 @@ export const ERA_FORMATS = [
   { group: 'Team Up', label: 'Team Up – Darkness Ablaze',                                         code: 'TEU-DAA' },
 
   // ── Ultra Prism ───────────────────────────────────────────────────────────
-  { group: 'Ultra Prism', label: 'Ultra Prism – Sword & Shield',                                  code: 'UPR-SSH' },
-  { group: 'Ultra Prism', label: 'Ultra Prism – Rebel Clash',                                     code: 'UPR-RCL' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Darkness Ablaze',                                 code: 'UPR-DAA' },
+  { group: 'Ultra Prism', label: 'Ultra Prism – Rebel Clash',                                     code: 'UPR-RCL' },
+  { group: 'Ultra Prism', label: 'Ultra Prism – Sword & Shield',                                  code: 'UPR-SSH' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Cosmic Eclipse',                                  code: 'UPR-CEC' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Unified Minds (Worlds 2019)',                     code: 'UPR-UNM', worlds: true },
 
@@ -60,6 +60,7 @@ export const ERA_FORMATS = [
   { group: 'BREAKthrough', label: 'BREAKthrough – Ultra Prism',                                   code: 'BKT-UPR' },
   { group: 'BREAKthrough', label: 'BREAKthrough – Crimson Invasion',                              code: 'BKT-CIN' },
   { group: 'BREAKthrough', label: 'BREAKthrough – Burning Shadows',                               code: 'BKT-BUS' },
+  { group: 'BREAKthrough', label: 'BREAKthrough – Guardians Rising',                              code: 'BKT-GRI' },
 
   // ── Primal Clash ─────────────────────────────────────────────────────────
   { group: 'Primal Clash', label: 'Primal Clash – Burning Shadows (Worlds 2017)',                 code: 'PRC-BUS', worlds: true, notes: 'XY Promos 36–211, SM Promos 1–44, 46–51, 78 legal' },
@@ -77,6 +78,7 @@ export const ERA_FORMATS = [
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Roaring Skies (Pre-Ban)',           code: 'BCR-ROS-PRE', notes: "Lysandre's Trump Card NOT yet banned" },
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Phantom Forces',                    code: 'BCR-PHF' },
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Furious Fists',                     code: 'BCR-FFI' },
+  { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Flashfire',                         code: 'BCR-FLF' },
 
   // ── Next Destinies ────────────────────────────────────────────────────────
   { group: 'Next Destinies', label: 'Next Destinies – Flashfire (Worlds 2014)',                   code: 'NXD-FLF', worlds: true, notes: 'BW Promos 33–101, XY Promos 1–27 legal' },
@@ -114,6 +116,7 @@ export const ERA_FORMATS = [
   { group: 'EX Hidden Legends', label: 'EX Hidden Legends – EX Holon Phantoms (Worlds 2006)',     code: 'HL-HP', worlds: true, notes: 'Nintendo Promos 27–33, 35–36 legal' },
 
   // ── EX Ruby & Sapphire ───────────────────────────────────────────────────
+  { group: 'EX Ruby & Sapphire', label: 'EX Ruby & Sapphire – Power Keepers (Full EX Era)',       code: 'RS-PK' },
   { group: 'EX Ruby & Sapphire', label: 'EX Ruby & Sapphire – EX Emerald (Worlds 2005)',          code: 'RS-EM', worlds: true, notes: 'Nintendo Promos 1–27 legal' },
 
   // ── Expedition ───────────────────────────────────────────────────────────

@@ -178,11 +178,11 @@ function PrintSel({ deck, rc, blingArr, ownedArr, startCopyIdx = 0 }) {
     if (!prints) {
       const all = await fetchAllPrints(rc.name, {
         supertype: api?.supertype,
+        subtypes: api?.subtypes,
         hp: api?.hp,
         attackNames: api?.attacks,
         attacksFull: api?.attacksFull,
         regulationMark: api?.regulationMark,
-        setId: api?.setId,
       });
 
       // Inject collection cards missing from the API results.

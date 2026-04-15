@@ -76,8 +76,8 @@ export const ALL_SETS = [
   {code:'BKT',name:'BREAKthrough',id:'xy8',era:'XY'},
   {code:'AOR',name:'Ancient Origins',id:'xy7',era:'XY'},
   {code:'ROS',name:'Roaring Skies',id:'xy6',era:'XY'},
-  {code:'PRC',name:'Primal Clash',id:'xy5',era:'XY'},
   {code:'DCR',name:'Double Crisis',id:'dc1',era:'XY'},
+  {code:'PRC',name:'Primal Clash',id:'xy5',era:'XY'},
   {code:'PHF',name:'Phantom Forces',id:'xy4',era:'XY'},
   {code:'FFI',name:'Furious Fists',id:'xy3',era:'XY'},
   {code:'FLF',name:'Flashfire',id:'xy2',era:'XY'},
@@ -106,6 +106,8 @@ export const ALL_SETS = [
   {code:'HS',name:'HeartGold & SoulSilver',id:'hgss1',era:'HGSS'},
   {code:'PR-HS',name:'HGSS Black Star Promos',id:'hsp',era:'HGSS'},
   // ── Diamond & Pearl / Platinum ───────────────────────────────────────────────
+  {code:'PR-DPP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
+  {code:'PR-DP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
   {code:'AR',name:'Arceus',id:'pl4',era:'DP'},
   {code:'SV',name:'Supreme Victors',id:'pl3',era:'DP'},
   {code:'RR',name:'Rising Rivals',id:'pl2',era:'DP'},
@@ -117,7 +119,6 @@ export const ALL_SETS = [
   {code:'SW',name:'Secret Wonders',id:'dp3',era:'DP'},
   {code:'MT',name:'Mysterious Treasures',id:'dp2',era:'DP'},
   {code:'DP',name:'Diamond & Pearl',id:'dp1',era:'DP'},
-  {code:'PR-DPP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
   // ── EX ───────────────────────────────────────────────────────────────────────
   {code:'PK',name:'EX Power Keepers',id:'ex16',era:'EX'},
   {code:'DF',name:'EX Dragon Frontiers',id:'ex15',era:'EX'},
@@ -190,19 +191,19 @@ export const PTCGO_TO_SET_ID = {
   'EVO':'xy12','STS':'xy11','FCO':'xy10','GEN':'g1',
   'BKP':'xy9','BKT':'xy8','AOR':'xy7','ROS':'xy6',
   'PRC':'xy5','DCR':'dc1','PHF':'xy4','FFI':'xy3',
-  'FLF':'xy2','KSS':'xy0','XY':'xy1','PR-XY':'xyp',
+  'FLF':'xy2','KSS':'xy0','XY':'xy1','PR-XY':'xyp','XYP':'xyp',
   // Black & White
   'LTR':'bw11','PLB':'bw10','PLF':'bw9','PLS':'bw8',
   'BCR':'bw7','DRV':'dv1','DRX':'bw6','DEX':'bw5',
   'NXD':'bw4','NVI':'bw3','EPO':'bw2','BLW':'bw1',
-  'PR-BLW':'bwp',
+  'PR-BLW':'bwp','BWP':'bwp',
   // HGSS
   'CL':'col1','TM':'hgss4','UD':'hgss3','UL':'hgss2',
   'HS':'hgss1','PR-HS':'hsp',
   // DP / Platinum
   'AR':'pl4','SV':'pl3','RR':'pl2','PL':'pl1',
   'SF':'dp7','LA':'dp6','MD':'dp5','GE':'dp4',
-  'SW':'dp3','MT':'dp2','DP':'dp1','PR-DPP':'dpp',
+  'SW':'dp3','MT':'dp2','DP':'dp1','PR-DPP':'dpp','PR-DP':'dpp',
   // EX
   'PK':'ex16','DF':'ex15','CG':'ex14','HP':'ex13',
   'LM':'ex12','DS':'ex11','UF':'ex10','EM':'ex9',

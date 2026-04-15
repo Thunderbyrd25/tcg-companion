@@ -270,7 +270,7 @@ function draw(imgs){
             onClick={() => setFilter(filter === 'illegal' ? 'all' : 'illegal')}
             style={{ color: '#ff6b4a', fontWeight: 700, cursor: 'pointer', marginBottom: 6 }}
           >
-            {issues.length} card{issues.length > 1 ? 's' : ''} may be illegal in {fmt} — click to {filter === 'illegal' ? 'clear filter' : 'filter'}
+            {issues.reduce((s, { rc }) => s + rc.qty, 0)} card{issues.reduce((s, { rc }) => s + rc.qty, 0) !== 1 ? 's' : ''} may be illegal in {fmt} — click to {filter === 'illegal' ? 'clear filter' : 'filter'}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 10px' }}>
             {issues.map(({ rc, reason }, i) => (
