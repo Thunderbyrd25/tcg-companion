@@ -33,14 +33,14 @@ export function getBasicEnergyType(name) {
   const m = n.match(/^(?:Basic )?(Grass|Fire|Water|Lightning|Psychic|Fighting|Darkness|Metal|Fairy|Colorless|Dragon) Energy$/i);
   return m ? m[1] : null;
 }
-const CARD_SELECT = 'id,name,supertype,subtypes,types,set,rarity,images,legalities,regulationMark,tcgplayer,number,attacks,hp,abilities,weaknesses,retreatCost';
+const CARD_SELECT = 'id,name,supertype,subtypes,types,set,rarity,images,legalities,regulationMark,tcgplayer,number,attacks,hp,abilities,weaknesses,retreatCost,rules,nationalPokedexNumbers';
 
 let apiKey = localStorage.getItem('ptcg_apikey') || '';
 const cache = new Map();
 
 // Persist card cache to localStorage so it survives page reloads
 const CACHE_KEY = 'tcg_card_cache';
-const CACHE_VERSION = 13;
+const CACHE_VERSION = 16;
 
 (function hydrateCache() {
   try {
@@ -134,6 +134,8 @@ export function parseCard(c) {
     abilities: c.abilities || [],
     weaknesses: c.weaknesses || [],
     retreatCost: c.retreatCost?.length ?? null,
+    rules: c.rules || [],
+    nationalPokedexNumbers: c.nationalPokedexNumbers || [],
   };
 }
 
@@ -427,6 +429,7 @@ export async function fetchAllPrints(cardName, { supertype, subtypes, hp, attack
         cards = cards.filter(c => {
           if (c.hp !== hp) return false;
           const cardAttacks = new Set(c.attacks.map(a => a.toLowerCase()));
+          if (cardAttacks.size !== wantedAttacks.size) return false;
           if (![...wantedAttacks].every(a => cardAttacks.has(a))) return false;
           // Cross-check damage + energy cost when full attack data is available
           if (attacksFull?.length) {
@@ -448,6 +451,39 @@ export async function fetchAllPrints(cardName, { supertype, subtypes, hp, attack
     }
   } catch {}
   printsCache.set(key, []);
+  return [];
+}
+
+// Fetch all cards featuring a given national Pokédex number.
+// Used for "Other Appearances" — shows every card that features the same Pokémon
+// regardless of card name (e.g. Darkrai Legend shows up for Darkrai #491).
+const appearancesCache = new Map();
+export async function fetchAllAppearances(pokedexNumbers) {
+  if (!pokedexNumbers?.length) return [];
+  const num = pokedexNumbers[0];
+  const key = `appearances-${num}`;
+  if (appearancesCache.has(key)) return appearancesCache.get(key);
+  try {
+    const q = encodeURIComponent(`nationalPokedexNumbers:${num}`);
+    const res = await fetch(
+      `${TCG_API}?q=${q}&select=id,name,images,set,number&pageSize=250&orderBy=set.releaseDate`,
+      { headers: headers() }
+    );
+    if (res.ok) {
+      const d = await res.json();
+      const cards = (d.data || []).map(c => ({
+        id: c.id,
+        name: c.name,
+        setName: c.set?.name || '',
+        setCode: c.set?.ptcgoCode || SET_ID_TO_CODE[c.set?.id] || '',
+        number: c.number || '',
+        imageSmall: c.images?.small || '',
+      }));
+      appearancesCache.set(key, cards);
+      return cards;
+    }
+  } catch {}
+  appearancesCache.set(key, []);
   return [];
 }
 
@@ -726,6 +762,7 @@ function parseTCGDexCard(c, setCode, ourSetId) {
     abilities:       (c.abilities || []).map(a => ({ name: a.name, effect: a.effect || '' })),
     weaknesses:      c.weaknesses || [],
     retreatCost:     c.retreat ?? null,
+    rules:           c.effect ? [c.effect] : [],
   };
 }
 

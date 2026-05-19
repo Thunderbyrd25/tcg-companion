@@ -356,6 +356,12 @@ export const SPLASH_DEFS = {
     { name: 'Blaziken', setCode: 'RS' },
   ],
 
+  // ── EX Ruby & Sapphire era ────────────────────────────────────────────────
+  'era-RS-PK': [
+    { name: 'Rayquaza ex', setCode: 'DF'},
+    { name: "Holon's Castform", setCode: 'HP'},
+  ],
+
   // ── Expedition era ────────────────────────────────────────────────────────
   'era-EXP-HL': [
     { name: 'Metagross ex', setCode: 'HL' },

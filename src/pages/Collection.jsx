@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality, effectiveRegMark, STANDARD_MIN_MARK, getEraMinMark } from '../utils/cards';
+import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality, effectiveRegMark, STANDARD_MIN_MARK, SET_MIN_MARK, getEraMinMark, getEraPromoAllowances } from '../utils/cards';
 
 import { parseRawLines } from '../utils/cards';
 import { useToast } from '../components/Toast';
@@ -251,7 +251,7 @@ const SET_ORDER = (() => {
 const FORMAT_FILTERS = ['All', 'Standard', 'Expanded', 'GLC', 'Eternal'];
 
 function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiData, getDeckOwned, dispatch, onCardClick }) {
-  const [sort, setSort] = useState('set');
+  const [sort, setSort] = useState('set-new');
   const [showUnowned, setShowUnowned] = useState(false);
   const [setFilter, setSetFilter] = useState('');
   const [formatFilter, setFormatFilter] = useState('All');
@@ -615,43 +615,44 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
         </label>
       </div>
 
-      {/* Format blocks + Era dropdown */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-        {FORMAT_FILTERS.map(f => {
-          const colorVar = f === 'Standard' ? 'var(--std)' : f === 'Expanded' ? 'var(--exp)' : f === 'GLC' ? 'var(--glc)' : f === 'Eternal' ? 'var(--eternal)' : 'var(--muted)';
-          const active = formatFilter === f && !eraFilter;
-          return (
-            <button key={f} onClick={() => { setFormatFilter(f); setEraFilter(''); }} style={{
-              padding: '5px 14px',
-              border: `2px solid ${active ? colorVar : 'var(--card-border)'}`,
-              borderRadius: 8,
-              background: active ? `color-mix(in srgb, ${colorVar} 15%, transparent)` : 'transparent',
-              color: active ? colorVar : 'var(--muted)',
-              fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 12, cursor: 'pointer', transition: 'all .15s',
-            }}>{f === 'All' ? 'All Formats' : f}</button>
-          );
-        })}
-        <select
-          value={eraFilter}
-          onChange={e => { setEraFilter(e.target.value); setFormatFilter('All'); }}
-          style={{
-            padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
-            border: `2px solid ${eraFilter ? 'var(--era)' : 'var(--card-border)'}`,
-            background: eraFilter ? 'rgba(196,123,222,.12)' : 'transparent',
-            color: eraFilter ? 'var(--era)' : 'var(--muted)',
-            fontFamily: "'Outfit',sans-serif", fontWeight: 700,
-          }}
-        >
-          <option value="">Era</option>
-          {Object.entries(ERA_GROUPS).map(([group, formats]) => (
-            <optgroup key={group} label={group}>
-              {formats.map(f => (
-                <option key={f.code} value={f.code}>{f.label} · {f.desc}</option>
+      {/* Format dropdown */}
+      {(() => {
+        const activeColor = eraFilter ? 'var(--era)' : formatFilter === 'Standard' ? 'var(--std)' : formatFilter === 'Expanded' ? 'var(--exp)' : formatFilter === 'GLC' ? 'var(--glc)' : formatFilter === 'Eternal' ? 'var(--eternal)' : 'var(--muted)';
+        const isActive = eraFilter || formatFilter !== 'All';
+        const selectValue = eraFilter ? `era:${eraFilter}` : `fmt:${formatFilter}`;
+        return (
+          <select
+            value={selectValue}
+            onChange={e => {
+              const v = e.target.value;
+              if (v.startsWith('era:')) { setEraFilter(v.slice(4)); setFormatFilter('All'); }
+              else { setFormatFilter(v.slice(4)); setEraFilter(''); }
+            }}
+            style={{
+              padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+              border: `2px solid ${isActive ? activeColor : 'var(--card-border)'}`,
+              background: isActive ? `color-mix(in srgb, ${activeColor} 12%, transparent)` : 'transparent',
+              color: isActive ? activeColor : 'var(--muted)',
+              fontFamily: "'Outfit',sans-serif", fontWeight: 700, marginBottom: 12,
+            }}
+          >
+            <option value="fmt:All">All Formats</option>
+            <optgroup label="Formats">
+              {FORMAT_FILTERS.filter(f => f !== 'All').map(f => (
+                <option key={f} value={`fmt:${f}`}>{f}</option>
               ))}
             </optgroup>
-          ))}
-        </select>
-      </div>
+            <optgroup label="─────────────" disabled />
+            {Object.entries(ERA_GROUPS).map(([group, formats]) => (
+              <optgroup key={group} label={group}>
+                {formats.map(f => (
+                  <option key={f.code} value={`era:${f.code}`}>{f.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        );
+      })()}
 
       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
         {viewMode === 'player' ? `${playerGroups.length} card${playerGroups.length !== 1 ? 's' : ''}` : `${sorted.length} print${sorted.length !== 1 ? 's' : ''}`}
@@ -933,6 +934,8 @@ function PlayerCardModal({ group, state, dispatch, getDeckOwned, onClose }) {
   );
 }
 
+const ERA_CANONICAL_ORDER = ['ME', 'SV', 'SWSH', 'SM', 'XY', 'BW', 'HGSS', 'DP', 'Platinum', 'EX', 'ECard', 'Neo', 'Gym', 'Base'];
+
 // ── Browse Tab ────────────────────────────────────────────────────────────────
 function BrowseTab({ state, dispatch, getDeckOwned }) {
   const [setsMeta, setSetsMeta] = useState({});
@@ -942,14 +945,21 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
+  const [infoCard, setInfoCard] = useState(null);
   // Inside-a-set controls
   const [cardSort, setCardSort] = useState('number');      // 'number' | 'name' | 'price' | 'owned'
   const [cardFilter, setCardFilter] = useState('all');     // 'all' | 'collection' | 'decks' | 'both' | 'needed' | 'unowned'
   // Set-grid controls
   const [gridSort, setGridSort] = useState('era');      // 'era' | 'completion' | 'value' | 'name'
   const [eraFilter, setEraFilter] = useState('');
+  const [browseFormat, setBrowseFormat] = useState('All');
+  const [browseEraCode, setBrowseEraCode] = useState('');
+  const [browseSort, setBrowseSort] = useState('set-new');
   const searchTimer = useRef(null);
+
+  const BROWSE_EXPANDED_ERAS = new Set(['BW', 'XY', 'SM', 'SWSH', 'SV', 'ME']);
 
   useEffect(() => { fetchSetsMetadata().then(setSetsMeta); }, []);
 
@@ -961,67 +971,93 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
 
   // Query search within a set or global
   useEffect(() => {
-    if (selectedSet) return; // set browsing handled above
-    if (!query) { setResults([]); setTotalCount(0); return; }
+    if (selectedSet) return;
+    if (!query) { setResults([]); setTotalCount(0); setHasMore(false); return; }
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => runSearch(1, null, query), 400);
     return () => clearTimeout(searchTimer.current);
   }, [query]);
 
+  // Re-run active search when format/era changes
+  useEffect(() => {
+    if (selectedSet) runSearch(1, selectedSet.id, '');
+    else if (query) runSearch(1, null, query);
+  }, [browseFormat, browseEraCode]);
+
+  function isCardLegalForBrowse(card) {
+    if (browseFormat === 'Standard') return card.legalities?.standard === 'Legal';
+    if (browseFormat === 'Expanded' || browseFormat === 'GLC') return card.legalities?.expanded === 'Legal';
+    if (browseEraCode) return checkEraLegality({ setCode: card.setCode, num: card.number }, browseEraCode).legal;
+    return true;
+  }
+
   async function runSearch(p = 1, setId = null, q = query) {
     if (!setId && !q) return;
     setLoading(true);
 
-    let cards = [], totalCount = 0;
-
-    // Known TCGDex-only sets (ME era etc.) — skip pokemontcg.io entirely
-    const isTCGDexSet = setId && !q && TCGDEX_SET_TOTALS[setId] != null;
-
-    if (!isTCGDexSet) {
-      ({ cards, totalCount } = await searchCards(q, setId, p));
-      // Fallback 1: retry by PTCGO code if set.id returned nothing
-      if (totalCount === 0 && setId && !q && selectedSet?.code) {
-        ({ cards, totalCount } = await searchCards('', null, p, selectedSet.code));
+    // ── Set browsing: load all cards, format filtering handled by displayResults ──
+    if (setId) {
+      let cards = [], total = 0;
+      const isTCGDexSet = TCGDEX_SET_TOTALS[setId] != null;
+      if (!isTCGDexSet) {
+        ({ cards, totalCount: total } = await searchCards(q, setId, p));
+        if (total === 0 && selectedSet?.code)
+          ({ cards, totalCount: total } = await searchCards('', null, p, selectedSet.code));
       }
-    }
-
-    // Fallback 2 (or primary for TCGDex sets): TCGDex for sets not in pokemontcg.io
-    if (totalCount === 0 && setId && !q) {
-      const tcgCards = await fetchTCGDexSet(setId, selectedSet?.code || '', selectedSet?.name || '');
-      if (tcgCards.length > 0) {
-        const updates = {};
-        for (const card of tcgCards) {
-          const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
-          updates[ck] = card;
+      if (total === 0) {
+        const tcgCards = await fetchTCGDexSet(setId, selectedSet?.code || '', selectedSet?.name || '');
+        if (tcgCards.length > 0) {
+          const updates = {};
+          for (const card of tcgCards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+          dispatch({ type: 'SET_API_DATA', updates });
+          setResults(tcgCards); setTotalCount(tcgCards.length); setPage(1); setHasMore(false); setLoading(false);
+          return;
         }
-        dispatch({ type: 'SET_API_DATA', updates });
-        setResults(tcgCards);
-        setTotalCount(tcgCards.length);
-        setPage(1);
-        setLoading(false);
-        return;
       }
+      if (cards.length > 0) {
+        const updates = {};
+        for (const card of cards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+        dispatch({ type: 'SET_API_DATA', updates });
+      }
+      setResults(prev => {
+        if (p === 1) return cards;
+        const seen = new Set(prev.map(c => `${c.setCode}||${c.number}`));
+        return [...prev, ...cards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
+      });
+      setTotalCount(total); setPage(p); setHasMore(false); setLoading(false);
+      return;
     }
 
-    // Cache cards so set grid can compute total set value
-    if (cards.length > 0) {
-      const updates = {};
-      for (const card of cards) {
-        const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
-        updates[ck] = card;
+    // ── Global search: filter by format, auto-advance pages if needed ──
+    const isFiltered = browseFormat !== 'All' || !!browseEraCode;
+    let currentPage = p;
+    let newCards = [];
+    let lastTotal = 0;
+    let morePages = false;
+    while (true) {
+      const { cards, totalCount } = await searchCards(q, null, currentPage);
+      lastTotal = totalCount;
+      if (cards.length > 0) {
+        const updates = {};
+        for (const card of cards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+        dispatch({ type: 'SET_API_DATA', updates });
       }
-      dispatch({ type: 'SET_API_DATA', updates });
+      const sortedPage = [...cards].sort((a, b) => {
+        const sDiff = (SET_ORDER[b.setCode] ?? 0) - (SET_ORDER[a.setCode] ?? 0);
+        if (sDiff !== 0) return sDiff;
+        return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      const pageCards = isFiltered ? sortedPage.filter(isCardLegalForBrowse) : sortedPage;
+      newCards = [...newCards, ...pageCards];
+      if (cards.length === 0 || currentPage * 20 >= lastTotal) { morePages = false; break; }
+      if (!isFiltered) { morePages = currentPage * 20 < lastTotal; break; }
+      currentPage++;
     }
-    // Deduplicate when appending (prevents duplicates from StrictMode double-invocation
-    // or overlapping parallel-fetch pages on Load more)
-    setResults(prev => {
-      if (p === 1) return cards;
+    setResults(p === 1 ? newCards : prev => {
       const seen = new Set(prev.map(c => `${c.setCode}||${c.number}`));
-      return [...prev, ...cards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
+      return [...prev, ...newCards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
     });
-    setTotalCount(totalCount);
-    setPage(p);
-    setLoading(false);
+    setTotalCount(lastTotal); setPage(currentPage); setHasMore(morePages); setLoading(false);
   }
 
   function setVariantQty(card, variant, delta) {
@@ -1131,20 +1167,60 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
     if (cardFilter === 'both')       list = list.filter(c => getQty(c) > 0);
     if (cardFilter === 'needed')     list = list.filter(c => neededKeys.has(cardKey({ name: c.name, setCode: c.setCode, num: c.number })));
     if (cardFilter === 'unowned')    list = list.filter(c => getQty(c) === 0);
+    if (browseFormat === 'Standard') list = list.filter(c => c.legalities?.standard === 'Legal');
+    else if (browseFormat === 'Expanded') list = list.filter(c => c.legalities?.expanded === 'Legal');
+    else if (browseFormat === 'GLC')     list = list.filter(c => c.legalities?.expanded === 'Legal');
+    else if (browseEraCode)              list = list.filter(c => checkEraLegality({ setCode: c.setCode, num: c.number }, browseEraCode).legal);
     list = [...list];
-    if (cardSort === 'number') list.sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
-    if (cardSort === 'name')   list.sort((a, b) => a.name.localeCompare(b.name));
-    if (cardSort === 'price')  list.sort((a, b) => (b.marketPrice || 0) - (a.marketPrice || 0));
-    if (cardSort === 'owned')  list.sort((a, b) => {
-      const diff = getQty(b) - getQty(a);
-      return diff !== 0 ? diff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
-    });
+    if (selectedSet) {
+      if (cardSort === 'number') list.sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+      if (cardSort === 'name')   list.sort((a, b) => a.name.localeCompare(b.name));
+      if (cardSort === 'price')  list.sort((a, b) => (b.marketPrice || 0) - (a.marketPrice || 0));
+      if (cardSort === 'owned')  list.sort((a, b) => {
+        const diff = getQty(b) - getQty(a);
+        return diff !== 0 ? diff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+    } else {
+      // Global search sort (results already in chronological order from runSearch; re-sort if user changes)
+      if (browseSort === 'set-new') list.sort((a, b) => {
+        const sDiff = (SET_ORDER[b.setCode] ?? 0) - (SET_ORDER[a.setCode] ?? 0);
+        return sDiff !== 0 ? sDiff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      if (browseSort === 'set-old') list.sort((a, b) => {
+        const sDiff = (SET_ORDER[a.setCode] ?? 0) - (SET_ORDER[b.setCode] ?? 0);
+        return sDiff !== 0 ? sDiff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      if (browseSort === 'name')       list.sort((a, b) => a.name.localeCompare(b.name));
+      if (browseSort === 'price-desc') list.sort((a, b) => (b.marketPrice || 0) - (a.marketPrice || 0));
+      if (browseSort === 'price-asc')  list.sort((a, b) => (a.marketPrice || 0) - (b.marketPrice || 0));
+    }
     return list;
-  }, [results, cardSort, cardFilter, state.collection, neededKeys]);
+  }, [results, cardSort, browseSort, cardFilter, selectedSet, state.collection, neededKeys]);
 
   // Set grid — sorted and filtered
   const allSets = useMemo(() => {
     let sets = ALL_SETS.filter(s => !eraFilter || s.era === eraFilter);
+    if (browseFormat === 'Standard') {
+      sets = sets.filter(s => SET_MIN_MARK[s.code] >= STANDARD_MIN_MARK);
+    } else if (browseFormat === 'Expanded' || browseFormat === 'GLC') {
+      sets = sets.filter(s => BROWSE_EXPANDED_ERAS.has(s.era));
+    } else if (browseEraCode) {
+      const parts = browseEraCode.split('-');
+      const fromCode = parts[0].trim().toUpperCase();
+      const toCode = (parts[1] || parts[0]).trim().toUpperCase();
+      const allCodes = ALL_SETS.map(s => s.code);
+      const fromIdx = allCodes.indexOf(fromCode);
+      const toIdx = allCodes.indexOf(toCode);
+      const noteAllowed = new Set(getEraPromoAllowances(browseEraCode).keys());
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const min = Math.min(fromIdx, toIdx);
+        const max = Math.max(fromIdx, toIdx);
+        sets = sets.filter(s => {
+          const i = allCodes.indexOf(s.code);
+          return (i >= min && i <= max) || noteAllowed.has(s.code);
+        });
+      }
+    }
     if (gridSort === 'name')       sets = [...sets].sort((a, b) => a.name.localeCompare(b.name));
     if (gridSort === 'completion') sets = [...sets].sort((a, b) => {
       const sa = setStats[a.id] || {}, sb = setStats[b.id] || {};
@@ -1157,9 +1233,38 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
       (setStats[b.id]?.value || 0) - (setStats[a.id]?.value || 0)
     );
     return sets;
-  }, [eraFilter, gridSort, setStats, setsMeta]);
+  }, [eraFilter, browseFormat, browseEraCode, gridSort, setStats, setsMeta]);
 
-  const allEras = useMemo(() => [...new Set(ALL_SETS.map(s => s.era))], []);
+  const allEras = useMemo(() => ERA_CANONICAL_ORDER.filter(e => ALL_SETS.some(s => s.era === e)), []);
+
+  // Format select — shared between set grid toolbar and inside-set/search header
+  const browseActiveColor = browseEraCode ? 'var(--era)' : browseFormat === 'Standard' ? 'var(--std)' : browseFormat === 'Expanded' ? 'var(--exp)' : browseFormat === 'GLC' ? 'var(--glc)' : 'var(--muted)';
+  const browseIsActive = browseEraCode || browseFormat !== 'All';
+  const browseSelectValue = browseEraCode ? `era:${browseEraCode}` : `fmt:${browseFormat}`;
+  const formatSelectEl = (
+    <select value={browseSelectValue} onChange={e => {
+      const v = e.target.value;
+      if (v.startsWith('era:')) { setBrowseEraCode(v.slice(4)); setBrowseFormat('All'); }
+      else { setBrowseFormat(v.slice(4)); setBrowseEraCode(''); }
+    }} style={{
+      padding: '8px 10px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+      border: `2px solid ${browseIsActive ? browseActiveColor : 'var(--card-border)'}`,
+      background: browseIsActive ? `color-mix(in srgb, ${browseActiveColor} 12%, transparent)` : 'var(--darker)',
+      color: browseIsActive ? browseActiveColor : 'var(--muted)',
+      fontFamily: "'Outfit',sans-serif", fontWeight: 700,
+    }}>
+      <option value="fmt:All">All Formats</option>
+      <optgroup label="Formats">
+        {['Standard', 'Expanded', 'GLC'].map(f => <option key={f} value={`fmt:${f}`}>{f}</option>)}
+      </optgroup>
+      <optgroup label="─────────────" disabled />
+      {Object.entries(ERA_GROUPS).map(([group, formats]) => (
+        <optgroup key={group} label={group}>
+          {formats.map(f => <option key={f.code} value={`era:${f.code}`}>{f.label}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
 
   // Set grid view
   if (!selectedSet && !query) {
@@ -1170,6 +1275,7 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search card name across all sets…"
             style={{ flex: 1, minWidth: 180, padding: '9px 14px' }} />
+          {formatSelectEl}
           <select value={eraFilter} onChange={e => setEraFilter(e.target.value)}
             style={{ padding: '8px 10px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--fg)', fontSize: 12 }}>
             <option value="">All eras</option>
@@ -1210,7 +1316,8 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           ? <span style={{ fontWeight: 800, fontSize: 13 }}>{selectedSet.name} <span style={{ color: 'var(--muted)', fontSize: 11 }}>({selectedSet.code})</span></span>
           : <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, padding: '8px 14px' }} autoFocus />
         }
-        {!selectedSet && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{loading ? 'Searching…' : `${totalCount} results`}</span>}
+        {!selectedSet && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{loading ? 'Searching…' : `${results.length} result${results.length !== 1 ? 's' : ''}`}</span>}
+        {formatSelectEl}
         {selectedSet && (
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             {/* Filter */}
@@ -1239,6 +1346,16 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
               {loading ? 'Loading…' : `${displayResults.length}${cardFilter !== 'all' ? `/${results.length}` : ''} cards`}
             </span>
           </div>
+        )}
+        {!selectedSet && (
+          <select value={browseSort} onChange={e => setBrowseSort(e.target.value)}
+            style={{ padding: '4px 8px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 6, color: 'var(--fg)', fontSize: 11 }}>
+            <option value="set-new">Newest first</option>
+            <option value="set-old">Oldest first</option>
+            <option value="name">Name A–Z</option>
+            <option value="price-desc">Price (high → low)</option>
+            <option value="price-asc">Price (low → high)</option>
+          </select>
         )}
       </div>
 
@@ -1297,12 +1414,10 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           );
         })}
       </div>
-      {results.length < totalCount && (
+      {hasMore && !selectedSet && (
         <button className="btn btn-ghost" style={{ width: '100%', marginTop: 12 }}
-          onClick={() => selectedSet
-            ? runSearch(page + 1, selectedSet.id, '')
-            : runSearch(page + 1, null, query)}>
-          Load more ({results.length}/{totalCount})
+          onClick={() => runSearch(page + 1, null, query)}>
+          Load more
         </button>
       )}
 
@@ -1312,6 +1427,7 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           getVariantQty={getVariantQty}
           setVariantQty={setVariantQty}
           onClose={() => setSelectedCard(null)}
+          onCardInfo={card => setInfoCard(card)}
           dispatch={dispatch}
           wishlist={state.wishlist || []}
           deckUsages={(() => {
@@ -1326,6 +1442,7 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           })()}
         />
       )}
+      {infoCard && <CardInfoModal card={infoCard} onClose={() => setInfoCard(null)} />}
     </div>
   );
 }
@@ -1404,8 +1521,9 @@ function EnergyCost({ cost }) {
 }
 
 // ── Browse Card Modal (card info + collection tracking + deck usage) ──────────
-function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsages = [], dispatch, wishlist = [] }) {
+function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardInfo, deckUsages = [], dispatch, wishlist = [] }) {
   const [activeCard, setActiveCard] = useState(card);
+  const baseCardRef = useRef(card); // tracks the patched version of the original card
   const [altPrints, setAltPrints] = useState([]);
   const [loadingAlts, setLoadingAlts] = useState(false);
   const [decksOpen, setDecksOpen] = useState(true);
@@ -1456,7 +1574,48 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
       attackNames: card.attacks,
       attacksFull: card.attacksFull,
     }).then(async prints => {
-      setAltPrints(prints.filter(p => p.id !== card.id));
+      // Same-slot duplicate: different id, same set+number. Merge richer data, exclude from list.
+      const normNum = n => String(n || '').replace(/^0+/, '') || '0';
+      const sameSetAs = (a, b) =>
+        (a.setId && b.setId && a.setId === b.setId) ||
+        (a.setCode && b.setCode && a.setCode === b.setCode) ||
+        (a.setName && b.setName && a.setName === b.setName);
+      const isSameSlot = p =>
+        p.id !== card.id &&
+        normNum(p.number) === normNum(card.number) &&
+        sameSetAs(p, card);
+      const scoreCard = c => (c.rules?.length || 0) + (c.abilities?.length || 0) +
+        (c.attacksFull?.length || 0) + (c.nationalPokedexNumbers?.length || 0) +
+        (c.marketPrice != null ? 1 : 0);
+
+      const freshSelf = prints.find(p => p.id === card.id);
+      const sameSlot  = prints.find(isSameSlot);
+      const donor = (sameSlot && scoreCard(sameSlot) >= scoreCard(freshSelf || card))
+        ? sameSlot : (freshSelf || sameSlot);
+      if (donor) {
+        setActiveCard(prev => {
+          if (!prev || prev.id !== card.id) return prev;
+          const patched = {
+            ...prev,
+            rules:               donor.rules?.length               ? donor.rules               : (prev.rules || []),
+            abilities:           donor.abilities?.length            ? donor.abilities            : (prev.abilities || []),
+            attacksFull:         donor.attacksFull?.length          ? donor.attacksFull          : (prev.attacksFull || []),
+            attacks:             donor.attacks?.length              ? donor.attacks              : (prev.attacks || []),
+            nationalPokedexNumbers: donor.nationalPokedexNumbers?.length ? donor.nationalPokedexNumbers : (prev.nationalPokedexNumbers || []),
+          };
+          baseCardRef.current = patched;
+          return patched;
+        });
+      }
+
+      const altMap = new Map();
+      for (const p of prints) {
+        if (p.id === card.id || isSameSlot(p)) continue;
+        const key = `${normNum(p.number)}||${p.setId || p.setCode || p.setName}`;
+        const ex = altMap.get(key);
+        if (!ex || scoreCard(p) > scoreCard(ex)) altMap.set(key, p);
+      }
+      setAltPrints([...altMap.values()]);
       setLoadingAlts(false);
 
       let stamped = prints.find(p => p.id !== card.id && p.setId !== card.setId && isPromoSet(p));
@@ -1551,6 +1710,26 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
             {displayCard.supertype}{displayCard.subtypes?.length ? ` — ${displayCard.subtypes.join(', ')}` : ''}
           </div>
 
+          {/* Rules / card text (trainer effects, energy text, rule boxes) */}
+          {displayCard.rules?.length > 0 && displayCard.rules.map((rule, i) => {
+            const isRuleBox = /rule:/i.test(rule) || /you must/i.test(rule);
+            return (
+              <div key={i} style={{
+                marginBottom: 10, padding: '8px 10px',
+                background: isRuleBox ? 'rgba(245,166,35,.06)' : 'rgba(108,142,191,.06)',
+                border: `1px solid ${isRuleBox ? 'rgba(245,166,35,.2)' : 'rgba(108,142,191,.2)'}`,
+                borderRadius: 8,
+              }}>
+                {isRuleBox && (
+                  <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: .5 }}>
+                    Rule Box
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6 }}>{rule}</div>
+              </div>
+            );
+          })}
+
           {/* Abilities */}
           {displayCard.abilities?.map((ab, i) => (
             <div key={i} style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(255,203,5,.06)', border: '1px solid rgba(255,203,5,.2)', borderRadius: 8 }}>
@@ -1609,7 +1788,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
                 <button
                   className="btn btn-ghost btn-sm"
                   style={{ fontSize: 10, padding: '3px 8px', fontWeight: displayCard.id === card.id ? 800 : 400 }}
-                  onClick={() => setActiveCard(card)}
+                  onClick={() => setActiveCard(baseCardRef.current)}
                 >
                   {card.setName} #{card.number}
                   {card.marketPrice != null ? ` · $${card.marketPrice.toFixed(2)}` : ''}
@@ -1689,6 +1868,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
 
           <div className="modal-actions" style={{ paddingLeft: 0, paddingRight: 0 }}>
             <button className="btn btn-ghost" onClick={onClose}>Done</button>
+            <button className="btn btn-ghost" onClick={() => onCardInfo?.(displayCard)}>Card Info</button>
             {(() => {
               const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
               const onWishlist = wishlist.some(w => cardKey(w) === ck);
@@ -1719,10 +1899,32 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
 // ── Decks Tab ─────────────────────────────────────────────────────────────────
 function DecksTab({ state, getApiData, getDeckOwned, onOpenDeck }) {
   const [editDeck, setEditDeck] = useState(null);
+  const [formatFilter, setFormatFilter] = useState('All');
+
+  const visibleDecks = formatFilter === 'All'
+    ? state.decks
+    : state.decks.filter(d => d.format === formatFilter);
+
+  const DECK_FORMATS = ['All', 'Standard', 'Expanded', 'GLC', 'Era', 'Custom', 'Eternal'];
+  const fmtColor = { Standard: 'var(--std)', Expanded: 'var(--exp)', GLC: 'var(--glc)', Era: 'var(--era)', Custom: 'var(--cst)', Eternal: 'var(--eternal)' };
+  const isActive = formatFilter !== 'All';
+  const activeColor = fmtColor[formatFilter] || 'var(--muted)';
+
   return (
     <>
+      <div style={{ marginBottom: 14 }}>
+        <select value={formatFilter} onChange={e => setFormatFilter(e.target.value)} style={{
+          padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+          border: `2px solid ${isActive ? activeColor : 'var(--card-border)'}`,
+          background: isActive ? `color-mix(in srgb, ${activeColor} 12%, transparent)` : 'transparent',
+          color: isActive ? activeColor : 'var(--muted)',
+          fontFamily: "'Outfit',sans-serif", fontWeight: 700,
+        }}>
+          {DECK_FORMATS.map(f => <option key={f} value={f}>{f === 'All' ? 'All Formats' : f}</option>)}
+        </select>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
-        {state.decks.map(deck => (
+        {visibleDecks.map(deck => (
           <DeckCard key={deck.id} deck={deck} onClick={() => onOpenDeck(deck.id)} onEdit={() => setEditDeck(deck)} />
         ))}
       </div>

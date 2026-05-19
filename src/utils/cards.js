@@ -1,6 +1,7 @@
 import { ALL_SETS, PTCGO_TO_SET_ID } from '../data/sets';
 import { expandEnergySymbols } from './api';
 import { ERA_FORMATS } from '../data/eras';
+import { isBannedIn } from '../data/bans';
 
 // Maps TCG Live virtual energy slot numbers to [setCode, cardNumber].
 // SUM slots (18-26) → sm1 card numbers (strategy 1 direct hit on pokemontcg.io).
@@ -165,7 +166,7 @@ function parseEraPromoNotes(notes) {
 
 // Cache parsed promo notes per era code so we don't re-parse on every legality check
 const _promoNotesCache = new Map();
-function getEraPromoAllowances(eraLabel) {
+export function getEraPromoAllowances(eraLabel) {
   if (_promoNotesCache.has(eraLabel)) return _promoNotesCache.get(eraLabel);
   const ef = ERA_FORMATS.find(f => f.code === eraLabel);
   const parsed = parseEraPromoNotes(ef?.notes);
@@ -221,7 +222,7 @@ const PRE_EXPANDED = new Set(['base1','base2','base3','base4','base5','base6','g
 // Per-card marks may differ (reprints keep original marks), but each set's
 // fresh originals carry this mark. Used to compute the minimum legal mark
 // for an era format. Pre-SWSH sets are absent because they have no reg marks.
-const SET_MIN_MARK = {
+export const SET_MIN_MARK = {
   'SSH':'A','RCL':'A','PR-SW':'A',
   'DAA':'B','CPA':'B','SHF':'B',
   'VIV':'C','BST':'C','CRE':'C',
@@ -260,9 +261,9 @@ export const STANDARD_MIN_MARK = 'H';
 // Returns the regulation mark for a card directly from the API.
 // Regulation marks are per-card, not per-set — a reprint in a newer set may carry
 // the same mark as the original printing (e.g. Prof's Research reprinted in PRE kept G).
-// The API tracks the correct per-card mark so we trust it directly.
+// Falls back to SET_MIN_MARK for sets where the API omits the mark (e.g. Japanese sets).
 export function effectiveRegMark(setCode, apiRegMark) {
-  return apiRegMark || '';
+  return apiRegMark || SET_MIN_MARK[setCode?.toUpperCase()] || '';
 }
 
 // Returns true if apiCache has any print of `name` that is Standard-legal.
@@ -311,11 +312,31 @@ function hasLegalStdReprint(name, apiCache, srcSubtypes, srcHp, srcAttacks) {
 export function checkLegality(rc, deck, apiData, apiCache = null) {
   const fmt = deck.format || 'Standard';
   if (fmt === 'Custom') return { legal: true };
-  if (fmt === 'Eternal') return { legal: true };
-  // Basic energies are always legal in every format
-  if (apiData?.supertype === 'Energy' && apiData?.subtypes?.includes('Basic')) return { legal: true };
+  if (fmt === 'Eternal') {
+    if (rc.name && isBannedIn(rc.name, 'Eternal', rc.setCode)) return { legal: false, reason: `${rc.name} is banned in Eternal` };
+    return { legal: true };
+  }
+  // Basic energies are always legal in every format — check by apiData first, then by name
+  // (name fallback handles cards loaded from TCGDex which may lack supertype/subtypes)
+  const isBasicEnergy = (apiData?.supertype === 'Energy' && apiData?.subtypes?.includes('Basic'))
+    || (/^(?:Basic )?(?:Grass|Fire|Water|Lightning|Psychic|Fighting|Darkness|Metal|Fairy|Dragon|Colorless) Energy$/.test(rc.name) && apiData?.subtypes?.includes?.('Special') !== true);
+  if (isBasicEnergy) return { legal: true };
   if (fmt === 'Era') {
     const eraLabel = deck.eraLabel || '';
+
+    // Ban check — runs before any range/reprint logic so a banned card can't
+    // be snuck in via an alternate print.
+    const ef = ERA_FORMATS.find(f => f.code === eraLabel);
+    if (ef?.banned?.length && rc.name) {
+      const normStr = s => (s || '').toLowerCase().replace(/['']/g, "'");
+      const normNum = n => String(n || '').replace(/^0+/, '') || '0';
+      for (const ban of ef.banned) {
+        if (normStr(rc.name) !== normStr(ban.name)) continue;
+        if (ban.number !== undefined && normNum(rc.num) !== normNum(ban.number)) continue;
+        return { legal: false, reason: `${ban.name} is banned in this era` };
+      }
+    }
+
     const isPokemon = apiData?.supertype === 'Pokémon' || apiData?.supertype === 'Pokemon';
     const eraMinMark = getEraMinMark(eraLabel);
 
@@ -403,12 +424,14 @@ export function checkLegality(rc, deck, apiData, apiCache = null) {
   }
 
   if (fmt === 'Expanded') {
+    if (rc.name && isBannedIn(rc.name, 'Expanded')) return { legal: false, reason: `${rc.name} is banned in Expanded` };
     if (apiData?.legalities?.expanded === 'Banned') return { legal: false, reason: 'Banned in Expanded' };
     if (PRE_EXPANDED.has(setId)) return { legal: false, reason: `${rc.setCode} is pre-BW, not Expanded legal` };
     return { legal: true };
   }
 
   if (fmt === 'GLC') {
+    if (rc.name && isBannedIn(rc.name, 'GLC')) return { legal: false, reason: `${rc.name} is banned in GLC` };
     if (PRE_EXPANDED.has(setId)) return { legal: false, reason: `${rc.setCode} not Expanded legal` };
     if (apiData?.subtypes?.some(st => GLC_RULE_BOX.has(st))) {
       const illegal = apiData.subtypes.find(st => GLC_RULE_BOX.has(st));

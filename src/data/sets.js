@@ -135,6 +135,11 @@ export const ALL_SETS = [
   {code:'MA',name:'EX Team Magma vs Aqua',id:'ex4',era:'EX'},
   {code:'DR',name:'EX Dragon',id:'ex3',era:'EX'},
   {code:'SS',name:'EX Sandstorm',id:'ex2',era:'EX'},
+  {code:'POP5',name:'POP Series 5',id:'pop5',era:'EX'},
+  {code:'POP4',name:'POP Series 4',id:'pop4',era:'EX'},
+  {code:'POP3',name:'POP Series 3',id:'pop3',era:'EX'},
+  {code:'POP2',name:'POP Series 2',id:'pop2',era:'EX'},
+  {code:'POP1',name:'POP Series 1',id:'pop1',era:'EX'},
   {code:'RS',name:'EX Ruby & Sapphire',id:'ex1',era:'EX'},
   {code:'PR-NP',name:'Nintendo Black Star Promos',id:'np',era:'EX'},
   // ── E-Card ───────────────────────────────────────────────────────────────────
@@ -142,6 +147,8 @@ export const ALL_SETS = [
   {code:'AQ',name:'Aquapolis',id:'ecard2',era:'ECard'},
   {code:'EXP',name:'Expedition Base Set',id:'ecard1',era:'ECard'},
   {code:'E1',name:'Expedition Base Set',id:'ecard1',era:'ECard'},
+  // LC placed here (May 2002) so era index ranges correctly span TR→LC through Neo/Gym sets
+  {code:'LC',name:'Legendary Collection',id:'base6',era:'Base'},
   // ── Neo ───────────────────────────────────────────────────────────────────────
   {code:'N4',name:'Neo Destiny',id:'neo4',era:'Neo'},
   {code:'N3',name:'Neo Revelation',id:'neo3',era:'Neo'},
@@ -154,7 +161,6 @@ export const ALL_SETS = [
   {code:'TR',name:'Team Rocket',id:'base5',era:'Base'},
   {code:'B2',name:'Base Set 2',id:'base4',era:'Base'},
   {code:'BS2',name:'Base Set 2',id:'base4',era:'Base'},
-  {code:'LC',name:'Legendary Collection',id:'base6',era:'Base'},
   {code:'FO',name:'Fossil',id:'base3',era:'Base'},
   {code:'JU',name:'Jungle',id:'base2',era:'Base'},
   {code:'BS',name:'Base Set',id:'base1',era:'Base'},
@@ -209,6 +215,7 @@ export const PTCGO_TO_SET_ID = {
   'LM':'ex12','DS':'ex11','UF':'ex10','EM':'ex9',
   'DX':'ex8','TRR':'ex7','RG':'ex6','HL':'ex5',
   'MA':'ex4','DR':'ex3','SS':'ex2','RS':'ex1',
+  'POP5':'pop5','POP4':'pop4','POP3':'pop3','POP2':'pop2','POP1':'pop1',
   'PR-NP':'np',
   // E-Card
   'SK':'ecard3','AQ':'ecard2','EXP':'ecard1','E1':'ecard1',

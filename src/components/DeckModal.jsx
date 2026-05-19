@@ -272,18 +272,25 @@ export default function DeckModal({
 
         <div className="fg">
           <label>Format</label>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: format === 'Era' ? 10 : 0 }}>
-            {FORMATS.map(f => (
-              <button key={f} onClick={() => setFormat(f)} style={{
-                padding: '7px 14px',
-                border: `2px solid ${format === f ? `var(--${f==='Standard'?'std':f==='Expanded'?'exp':f==='GLC'?'glc':f==='Era'?'era':f==='Eternal'?'eternal':'cst'})` : 'var(--card-border)'}`,
-                borderRadius: 8,
-                background: format === f ? `rgba(${f==='Standard'?'108,142,191':f==='Expanded'?'155,89,182':f==='GLC'?'230,126,34':f==='Era'?'196,123,222':f==='Eternal'?'212,160,23':'120,120,160'},.12)` : 'transparent',
-                color: format === f ? `var(--${f==='Standard'?'std':f==='Expanded'?'exp':f==='GLC'?'glc':f==='Era'?'era':f==='Eternal'?'eternal':'cst'})` : 'var(--muted)',
-                fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 12, cursor: 'pointer', transition: 'all .15s',
-              }}>{FORMAT_LABELS[f] || f}</button>
-            ))}
-          </div>
+          {(() => {
+            const fmtColor = format === 'Standard' ? 'var(--std)' : format === 'Expanded' ? 'var(--exp)' : format === 'GLC' ? 'var(--glc)' : format === 'Era' ? 'var(--era)' : format === 'Eternal' ? 'var(--eternal)' : 'var(--cst)';
+            return (
+              <select
+                value={format}
+                onChange={e => setFormat(e.target.value)}
+                style={{
+                  width: '100%', padding: '8px 12px', fontSize: 13, borderRadius: 8, cursor: 'pointer',
+                  border: `2px solid ${fmtColor}`,
+                  background: `color-mix(in srgb, ${fmtColor} 10%, var(--darker))`,
+                  color: fmtColor,
+                  fontFamily: "'Outfit',sans-serif", fontWeight: 700,
+                  marginBottom: format === 'Era' ? 10 : 0,
+                }}
+              >
+                {FORMATS.map(f => <option key={f} value={f}>{FORMAT_LABELS[f] || f}</option>)}
+              </select>
+            );
+          })()}
 
           {format === 'Era' && (
             <div style={{ marginTop: 8, padding: '14px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 10 }}>
