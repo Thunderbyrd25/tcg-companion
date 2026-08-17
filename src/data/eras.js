@@ -42,9 +42,9 @@ export const ERA_FORMATS = [
   { group: 'Team Up', label: 'Team Up – Darkness Ablaze',                                         code: 'TEU-DAA' },
 
   // ── Ultra Prism ───────────────────────────────────────────────────────────
-  { group: 'Ultra Prism', label: 'Ultra Prism – Sword & Shield',                                  code: 'UPR-SSH' },
-  { group: 'Ultra Prism', label: 'Ultra Prism – Rebel Clash',                                     code: 'UPR-RCL' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Darkness Ablaze',                                 code: 'UPR-DAA' },
+  { group: 'Ultra Prism', label: 'Ultra Prism – Rebel Clash',                                     code: 'UPR-RCL' },
+  { group: 'Ultra Prism', label: 'Ultra Prism – Sword & Shield',                                  code: 'UPR-SSH' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Cosmic Eclipse',                                  code: 'UPR-CEC' },
   { group: 'Ultra Prism', label: 'Ultra Prism – Unified Minds (Worlds 2019)',                     code: 'UPR-UNM', worlds: true },
 
@@ -60,6 +60,7 @@ export const ERA_FORMATS = [
   { group: 'BREAKthrough', label: 'BREAKthrough – Ultra Prism',                                   code: 'BKT-UPR' },
   { group: 'BREAKthrough', label: 'BREAKthrough – Crimson Invasion',                              code: 'BKT-CIN' },
   { group: 'BREAKthrough', label: 'BREAKthrough – Burning Shadows',                               code: 'BKT-BUS' },
+  { group: 'BREAKthrough', label: 'BREAKthrough – Guardians Rising',                              code: 'BKT-GRI' },
 
   // ── Primal Clash ─────────────────────────────────────────────────────────
   { group: 'Primal Clash', label: 'Primal Clash – Burning Shadows (Worlds 2017)',                 code: 'PRC-BUS', worlds: true, notes: 'XY Promos 36–211, SM Promos 1–44, 46–51, 78 legal' },
@@ -69,14 +70,15 @@ export const ERA_FORMATS = [
   { group: 'Primal Clash', label: 'Primal Clash – Steam Siege',                                   code: 'PRC-STS' },
 
   // ── XY ───────────────────────────────────────────────────────────────────
-  { group: 'XY', label: 'XY – Steam Siege (Worlds 2016)',                                         code: 'XY-STS', worlds: true, notes: "Lysandre's Trump Card banned; XY Promos 1–116, 121–123, 127–156, 176 legal" },
-  { group: 'XY', label: 'XY – Fates Collide',                                                     code: 'XY-FCO', notes: "Lysandre's Trump Card banned" },
+  { group: 'XY', label: 'XY – Steam Siege (Worlds 2016)',                                         code: 'XY-STS', worlds: true, notes: "Lysandre's Trump Card banned; XY Promos 1–116, 121–123, 127–156, 176 legal", banned: [{name:"Lysandre's Trump Card"}] },
+  { group: 'XY', label: 'XY – Fates Collide',                                                     code: 'XY-FCO', notes: "Lysandre's Trump Card banned", banned: [{name:"Lysandre's Trump Card"}] },
 
   // ── Boundaries Crossed ───────────────────────────────────────────────────
-  { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Roaring Skies (Worlds 2015)',       code: 'BCR-ROS', worlds: true, notes: "Lysandre's Trump Card banned; BW Promos 51–101, XY Promos 1–55, 91 legal" },
+  { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Roaring Skies (Worlds 2015)',       code: 'BCR-ROS', worlds: true, notes: "Lysandre's Trump Card banned; BW Promos 51–101, XY Promos 1–55, 91 legal", banned: [{name:"Lysandre's Trump Card"}] },
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Roaring Skies (Pre-Ban)',           code: 'BCR-ROS-PRE', notes: "Lysandre's Trump Card NOT yet banned" },
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Phantom Forces',                    code: 'BCR-PHF' },
   { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Furious Fists',                     code: 'BCR-FFI' },
+  { group: 'Boundaries Crossed', label: 'Boundaries Crossed – Flashfire',                         code: 'BCR-FLF' },
 
   // ── Next Destinies ────────────────────────────────────────────────────────
   { group: 'Next Destinies', label: 'Next Destinies – Flashfire (Worlds 2014)',                   code: 'NXD-FLF', worlds: true, notes: 'BW Promos 33–101, XY Promos 1–27 legal' },
@@ -114,6 +116,7 @@ export const ERA_FORMATS = [
   { group: 'EX Hidden Legends', label: 'EX Hidden Legends – EX Holon Phantoms (Worlds 2006)',     code: 'HL-HP', worlds: true, notes: 'Nintendo Promos 27–33, 35–36 legal' },
 
   // ── EX Ruby & Sapphire ───────────────────────────────────────────────────
+  { group: 'EX Ruby & Sapphire', label: 'EX Ruby & Sapphire – Power Keepers (Full EX Era)',       code: 'RS-PK', notes: 'Nintendo Promos 1–40 legal' },
   { group: 'EX Ruby & Sapphire', label: 'EX Ruby & Sapphire – EX Emerald (Worlds 2005)',          code: 'RS-EM', worlds: true, notes: 'Nintendo Promos 1–27 legal' },
 
   // ── Expedition ───────────────────────────────────────────────────────────
@@ -121,13 +124,13 @@ export const ERA_FORMATS = [
   { group: 'Expedition', label: 'Expedition – Skyridge',                                          code: 'EXP-SK', notes: 'WotC Promos 50–53 legal' },
 
   // ── Neo Genesis ───────────────────────────────────────────────────────────
-  { group: 'Neo Genesis', label: 'Neo Genesis – Skyridge',                                        code: 'N1-SK', notes: 'Sneasel #25 & Slowking #14 banned' },
-  { group: 'Neo Genesis', label: 'Neo Genesis – Legendary Collection (Worlds 2002)',              code: 'N1-LC', worlds: true, notes: 'Sneasel #25 banned' },
+  { group: 'Neo Genesis', label: 'Neo Genesis – Skyridge',                                        code: 'N1-SK', notes: 'Sneasel #25 & Slowking #14 banned', banned: [{name:'Sneasel',number:'25'},{name:'Slowking',number:'14'}] },
+  { group: 'Neo Genesis', label: 'Neo Genesis – Legendary Collection (Worlds 2002)',              code: 'N1-LC', worlds: true, notes: 'Sneasel #25 banned', banned: [{name:'Sneasel',number:'25'}] },
 
   // ── Team Rocket ───────────────────────────────────────────────────────────
-  { group: 'Team Rocket', label: 'Team Rocket – Legendary Collection',                            code: 'TR-LC', notes: 'Sneasel #25 banned' },
-  { group: 'Team Rocket', label: 'Team Rocket – Neo Revelation',                                  code: 'TR-NR', notes: 'Sneasel #25 banned' },
-  { group: 'Team Rocket', label: 'Team Rocket – Neo Genesis',                                     code: 'TR-N1', notes: 'Sneasel #25 banned' },
+  { group: 'Team Rocket', label: 'Team Rocket – Legendary Collection',                            code: 'TR-LC', notes: 'Sneasel #25 banned', banned: [{name:'Sneasel',number:'25'}] },
+  { group: 'Team Rocket', label: 'Team Rocket – Neo Revelation',                                  code: 'TR-NR', notes: 'Sneasel #25 banned', banned: [{name:'Sneasel',number:'25'}] },
+  { group: 'Team Rocket', label: 'Team Rocket – Neo Genesis',                                     code: 'TR-N1', notes: 'Sneasel #25 banned', banned: [{name:'Sneasel',number:'25'}] },
 
   // ── Base Set ──────────────────────────────────────────────────────────────
   { group: 'Base Set', label: 'Base Set – Neo Destiny',                                           code: 'BS-N4' },

@@ -22,10 +22,10 @@ export default function DeckCard({ deck, onClick, onEdit }) {
   }
 
   // Legality issues
-  const issues = deck.rawCards.filter(rc => {
+  const issues = deck.rawCards.reduce((s, rc) => {
     const api = getApiData(rc);
-    return !checkLegality(rc, deck, api, state.apiCache).legal;
-  }).length;
+    return s + (!checkLegality(rc, deck, api, state.apiCache).legal ? rc.qty : 0);
+  }, 0);
 
   const cost = deckCost(deck);
   const remaining = deckCost(deck, true);

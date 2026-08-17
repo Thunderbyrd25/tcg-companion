@@ -1,17 +1,10 @@
 import { useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { setApiKey, getApiKey } from '../utils/api';
 import { useToast } from './Toast';
 
 export default function SaveRestoreModal({ onClose }) {
   const { state, dispatch } = useStore();
   const toast = useToast();
-  const [keyVal, setKeyVal] = useState(getApiKey());
-
-  function saveKey() {
-    setApiKey(keyVal.trim());
-    toast('API key saved!', 'green');
-  }
 
   function exportAll() {
     const data = { version: 4, exported: new Date().toISOString(), decks: state.decks, collection: state.collection };
@@ -41,25 +34,6 @@ export default function SaveRestoreModal({ onClose }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <h3>Save & Restore</h3>
-
-        <div className="fg">
-          <label>pokemontcg.io API Key (optional)</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className="fi"
-              type="text"
-              value={keyVal}
-              onChange={e => setKeyVal(e.target.value)}
-              placeholder="Free key = 20k lookups/day vs 1k without"
-              autoComplete="off"
-              style={{ flex: 1 }}
-            />
-            <button className="btn btn-blue btn-sm" onClick={saveKey}>Save</button>
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>
-            Get a free key at <a href="https://dev.pokemontcg.io" target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>dev.pokemontcg.io</a>
-          </div>
-        </div>
 
         <p className="modal-hint">
           Everything auto-saves to your browser. Export a JSON backup to use on another device or as a safety net.

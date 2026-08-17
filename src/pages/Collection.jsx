@@ -1,13 +1,14 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality } from '../utils/cards';
+import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality, effectiveRegMark, STANDARD_MIN_MARK, SET_MIN_MARK, getEraMinMark, getEraPromoAllowances } from '../utils/cards';
+
 import { parseRawLines } from '../utils/cards';
 import { useToast } from '../components/Toast';
 import { ALL_SETS } from '../data/sets';
 const SET_ID_TO_CODE = Object.fromEntries(ALL_SETS.filter(s => s.id).map(s => [s.id, s.code]));
 import prizePackLookup from '../data/prizePackLookup.json';
 import { ERA_FORMATS, ERA_GROUPS } from '../data/eras';
-import { searchCards, fetchSetsMetadata, fetchAllPrints, fetchPrizePackPrice, getCachedSetStats } from '../utils/api';
+import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
 import DeckCard from '../components/DeckCard';
 import DeckModal from '../components/DeckModal';
 import CardInfoModal from '../components/CardInfoModal';
@@ -20,6 +21,12 @@ function collQty(val) {
   if (!val) return 0;
   if (typeof val === 'number') return val;
   return Object.values(val).reduce((s, v) => s + (v || 0), 0);
+}
+
+// Mirrors useStore's sumOwnedArr — handles both old integer and new per-copy boolean array formats
+function sumOwnedArr(val, qty) {
+  if (Array.isArray(val)) return val.slice(0, qty).reduce((s, v) => s + (v || 0), 0);
+  return Math.min(qty, Math.max(0, val || 0));
 }
 
 // Adjust the standalone 'normal' collection qty for a card by delta
@@ -107,9 +114,9 @@ export default function Collection({ onOpenDeck }) {
           onCardClick={setCollectionCard}
         />
       )}
-      {tab === 'Sets' && <BrowseTab state={state} dispatch={dispatch} />}
+      {tab === 'Sets' && <BrowseTab state={state} dispatch={dispatch} getDeckOwned={getDeckOwned} />}
       {tab === 'Decks' && <DecksTab state={state} getApiData={getApiData} getDeckOwned={getDeckOwned} onOpenDeck={onOpenDeck} />}
-      {tab === 'Wishlist' && <WishlistTab state={state} getApiData={getApiData} getDeckOwned={getDeckOwned} onCardClick={setCollectionCard} />}
+      {tab === 'Wishlist' && <WishlistTab state={state} dispatch={dispatch} getApiData={getApiData} getDeckOwned={getDeckOwned} onCardClick={setCollectionCard} />}
 
       {importOpen && <ImportCollectionModal onClose={() => setImportOpen(false)} toast={toast} dispatch={dispatch} state={state} />}
 
@@ -211,6 +218,20 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}>Close</button>
           {api && <button className="btn btn-ghost" onClick={() => setShowCardInfo(true)}>Card Info</button>}
+          {(() => {
+            const onWishlist = (state.wishlist || []).some(w => cardKey(w) === ck);
+            return (
+              <button
+                className={`btn btn-sm ${onWishlist ? 'btn-yellow' : 'btn-ghost'}`}
+                onClick={() => onWishlist
+                  ? dispatch({ type: 'REMOVE_WISHLIST', ck })
+                  : dispatch({ type: 'ADD_WISHLIST', item: { name: rc.name, setCode: rc.setCode, num: rc.num, qty: 1 } })
+                }
+              >
+                {onWishlist ? '★ Wishlisted' : '☆ Wishlist'}
+              </button>
+            );
+          })()}
         </div>
       </div>
 
@@ -227,10 +248,10 @@ const SET_ORDER = (() => {
   return m;
 })();
 
-const FORMAT_FILTERS = ['All', 'Standard', 'Expanded', 'GLC'];
+const FORMAT_FILTERS = ['All', 'Standard', 'Expanded', 'GLC', 'Eternal'];
 
 function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiData, getDeckOwned, dispatch, onCardClick }) {
-  const [sort, setSort] = useState('set');
+  const [sort, setSort] = useState('set-new');
   const [showUnowned, setShowUnowned] = useState(false);
   const [setFilter, setSetFilter] = useState('');
   const [formatFilter, setFormatFilter] = useState('All');
@@ -243,9 +264,62 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
   const [playerModalGroup, setPlayerModalGroup] = useState(null); // group opened in player modal
   const fetchingRef = useRef(false);
   const fetchedSetsRef = useRef(new Set());
+  const reprintChecked = useRef(new Set());
 
   // Reset to page 1 whenever any filter or sort changes
   useEffect(() => { setPage(1); }, [sort, setFilter, formatFilter, eraFilter, showUnowned, typeFilter, search]);
+
+  // When Standard filter is active, ensure H+ reprints are loaded for any cached card
+  // that has a rotated or missing regulation mark — so hasLegalStdReprint can find them.
+  useEffect(() => {
+    if (formatFilter !== 'Standard') return;
+    for (const data of Object.values(state.apiCache)) {
+      if (!data?.name || !data.setCode) continue;
+      if (data.supertype === 'Energy' && data.subtypes?.includes('Basic')) continue;
+      const rm = effectiveRegMark(data.setCode, data.regulationMark);
+      if (rm && rm >= STANDARD_MIN_MARK) continue; // already directly legal — no reprint needed
+      const rk = `${data.name}||${(data.subtypes || []).slice().sort().join(',')}`;
+      if (reprintChecked.current.has(rk)) continue;
+      reprintChecked.current.add(rk);
+      fetchReprintsForLegality(data.name, { subtypes: data.subtypes, hp: data.hp, attacks: data.attacks })
+        .then(reprints => {
+          if (!reprints.length) return;
+          const updates = {};
+          for (const r of reprints) updates[`${r.name}||${r.setCode}||${r.number}`] = r;
+          dispatch({ type: 'SET_API_DATA', updates });
+        });
+    }
+  }, [formatFilter, Object.keys(state.apiCache).length]);
+
+  // When an era filter is active, ensure all prints of out-of-range cards are loaded so
+  // checkLegality's era reprint check can find era-legal prints (e.g. Base Set Switch is
+  // legal in BRS-SCR because Switch exists in BRS).
+  const eraReprintChecked = useRef(new Set());
+  useEffect(() => {
+    if (formatFilter !== 'Era' || !eraFilter) return;
+    for (const data of Object.values(state.apiCache)) {
+      if (!data?.name || !data.setCode) continue;
+      if (data.supertype === 'Energy' && data.subtypes?.includes('Basic')) continue;
+      // Skip only if directly legal: set in range AND (pre-mark era, or mark is legal)
+      if (checkEraLegality({ setCode: data.setCode, num: data.number }, eraFilter).legal) {
+        const eraMinMark = getEraMinMark(eraFilter);
+        if (!eraMinMark || (data.regulationMark && data.regulationMark >= eraMinMark)) continue;
+      }
+      const rk = `${eraFilter}||${data.name}`;
+      if (eraReprintChecked.current.has(rk)) continue;
+      eraReprintChecked.current.add(rk);
+      fetchAllPrints(data.name, { loose: true }).then(prints => {
+        const updates = {};
+        for (const p of prints) {
+          if (!p.setCode) continue;
+          if (checkEraLegality({ setCode: p.setCode, num: p.number }, eraFilter).legal) {
+            updates[`${p.name}||${p.setCode}||${p.number}`] = p;
+          }
+        }
+        if (Object.keys(updates).length) dispatch({ type: 'SET_API_DATA', updates });
+      });
+    }
+  }, [formatFilter, eraFilter, Object.keys(state.apiCache).length]);
 
   // When showUnowned is on and a specific set is selected, fetch that set into cache
   useEffect(() => {
@@ -308,18 +382,38 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
   }, [showUnowned, setFilter]);
 
   const deckUsage = useMemo(() => {
-    const map = {};      // cardKey -> [deck names]
-    const inDecks = {};  // cardKey -> total owned-in-deck copies across all decks
+    const map = {};        // cardKey -> [deck names]
+    const neededMap = {};  // cardKey -> [deck names where more copies are needed]
+    const inDecks = {};    // cardKey -> total owned-in-deck copies across all decks
     for (const deck of state.decks) {
       if (deck.isBuyList) continue;
       for (const rc of deck.rawCards) {
         const ck = cardKey(rc);
         if (!map[ck]) map[ck] = [];
         map[ck].push(deck.name);
-        inDecks[ck] = (inDecks[ck] || 0) + (deck.ownedMap?.[ck] ?? 0);
+        const owned = sumOwnedArr(deck.ownedMap?.[ck], rc.qty);
+        inDecks[ck] = (inDecks[ck] || 0) + owned;
+        if (rc.qty - owned > 0) {
+          if (!neededMap[ck]) neededMap[ck] = [];
+          if (!neededMap[ck].includes(deck.name)) neededMap[ck].push(deck.name);
+        }
+
+        // Also register bling-substituted prints so they show as "in deck".
+        // e.g. if the deck lists Charizard ex OBF but the user owns the MEG bling,
+        // the MEG print should appear as "in deck", not "not in deck".
+        const stored = deck.blingSel?.[ck];
+        if (stored) {
+          const blings = Array.isArray(stored) ? stored : new Array(rc.qty).fill(stored);
+          for (const b of blings) {
+            if (!b || (b.setCode === rc.setCode && b.number === rc.num)) continue;
+            const altCk = cardKey({ name: rc.name, setCode: b.setCode || '', num: b.number || '' });
+            if (!map[altCk]) map[altCk] = [];
+            if (!map[altCk].includes(deck.name)) map[altCk].push(deck.name);
+          }
+        }
       }
     }
-    return { map, inDecks };
+    return { map, neededMap, inDecks };
   }, [state.decks]);
 
   // All cards: owned (own > 0) always shown; unowned deck cards shown if showUnowned
@@ -386,7 +480,7 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
       if (seen[ck]) { if (!seen[ck].api) seen[ck].api = api; continue; }
       seen[ck] = { rc: { name: api.name, setCode: api.setCode, num: api.number, qty: 1 }, own: 0, api };
     }
-    return Object.values(seen).map(e => ({ ...e, decks: deckUsage.map[cardKey(e.rc)] || [] }));
+    return Object.values(seen).map(e => ({ ...e, decks: deckUsage.map[cardKey(e.rc)] || [], neededDecks: deckUsage.neededMap[cardKey(e.rc)] || [] }));
   }, [state, getApiData, getDeckOwned, deckUsage]);
 
   // All sets grouped by era, for the set filter dropdown
@@ -404,12 +498,12 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
     if (search && !rc.name.toLowerCase().includes(search.toLowerCase())) return false;
     if (setFilter && rc.setCode !== setFilter) return false;
     if (eraFilter) {
-      const sc = rc.setCode || api?.setCode || '';
-      if (!sc || !checkEraLegality({ ...rc, setCode: sc }, eraFilter).legal) return false;
+      const fakeDeck = { format: 'Era', eraLabel: eraFilter };
+      if (!checkLegality({ ...rc, qty: 1 }, fakeDeck, api, state.apiCache).legal) return false;
     }
     if (formatFilter !== 'All') {
-      const fakeDeck = { format: formatFilter, eraLabel: '' };
-      if (!checkLegality({ ...rc, qty: 1 }, fakeDeck, api).legal) return false;
+      const fakeDeck = { format: formatFilter, eraLabel: eraFilter };
+      if (!checkLegality({ ...rc, qty: 1 }, fakeDeck, api, state.apiCache).legal) return false;
     }
     if (typeFilter === 'all') return true;
     const sec = api ? supertypeToSection(api.supertype) : getSection(rc.name, {}, {});
@@ -521,43 +615,44 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
         </label>
       </div>
 
-      {/* Format blocks + Era dropdown */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
-        {FORMAT_FILTERS.map(f => {
-          const colorVar = f === 'Standard' ? 'var(--std)' : f === 'Expanded' ? 'var(--exp)' : f === 'GLC' ? 'var(--glc)' : 'var(--muted)';
-          const active = formatFilter === f && !eraFilter;
-          return (
-            <button key={f} onClick={() => { setFormatFilter(f); setEraFilter(''); }} style={{
-              padding: '5px 14px',
-              border: `2px solid ${active ? colorVar : 'var(--card-border)'}`,
-              borderRadius: 8,
-              background: active ? `color-mix(in srgb, ${colorVar} 15%, transparent)` : 'transparent',
-              color: active ? colorVar : 'var(--muted)',
-              fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 12, cursor: 'pointer', transition: 'all .15s',
-            }}>{f === 'All' ? 'All Formats' : f}</button>
-          );
-        })}
-        <select
-          value={eraFilter}
-          onChange={e => { setEraFilter(e.target.value); setFormatFilter('All'); }}
-          style={{
-            padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
-            border: `2px solid ${eraFilter ? 'var(--era)' : 'var(--card-border)'}`,
-            background: eraFilter ? 'rgba(196,123,222,.12)' : 'transparent',
-            color: eraFilter ? 'var(--era)' : 'var(--muted)',
-            fontFamily: "'Outfit',sans-serif", fontWeight: 700,
-          }}
-        >
-          <option value="">Era</option>
-          {Object.entries(ERA_GROUPS).map(([group, formats]) => (
-            <optgroup key={group} label={group}>
-              {formats.map(f => (
-                <option key={f.code} value={f.code}>{f.label} · {f.desc}</option>
+      {/* Format dropdown */}
+      {(() => {
+        const activeColor = eraFilter ? 'var(--era)' : formatFilter === 'Standard' ? 'var(--std)' : formatFilter === 'Expanded' ? 'var(--exp)' : formatFilter === 'GLC' ? 'var(--glc)' : formatFilter === 'Eternal' ? 'var(--eternal)' : 'var(--muted)';
+        const isActive = eraFilter || formatFilter !== 'All';
+        const selectValue = eraFilter ? `era:${eraFilter}` : `fmt:${formatFilter}`;
+        return (
+          <select
+            value={selectValue}
+            onChange={e => {
+              const v = e.target.value;
+              if (v.startsWith('era:')) { setEraFilter(v.slice(4)); setFormatFilter('All'); }
+              else { setFormatFilter(v.slice(4)); setEraFilter(''); }
+            }}
+            style={{
+              padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+              border: `2px solid ${isActive ? activeColor : 'var(--card-border)'}`,
+              background: isActive ? `color-mix(in srgb, ${activeColor} 12%, transparent)` : 'transparent',
+              color: isActive ? activeColor : 'var(--muted)',
+              fontFamily: "'Outfit',sans-serif", fontWeight: 700, marginBottom: 12,
+            }}
+          >
+            <option value="fmt:All">All Formats</option>
+            <optgroup label="Formats">
+              {FORMAT_FILTERS.filter(f => f !== 'All').map(f => (
+                <option key={f} value={`fmt:${f}`}>{f}</option>
               ))}
             </optgroup>
-          ))}
-        </select>
-      </div>
+            <optgroup label="─────────────" disabled />
+            {Object.entries(ERA_GROUPS).map(([group, formats]) => (
+              <optgroup key={group} label={group}>
+                {formats.map(f => (
+                  <option key={f.code} value={`era:${f.code}`}>{f.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        );
+      })()}
 
       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
         {viewMode === 'player' ? `${playerGroups.length} card${playerGroups.length !== 1 ? 's' : ''}` : `${sorted.length} print${sorted.length !== 1 ? 's' : ''}`}
@@ -576,9 +671,14 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
         /* ── Collector view: one tile per print ── */
         <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 12 }}>
-          {sorted.slice((page - 1) * CARDS_PER_PAGE, page * CARDS_PER_PAGE).map(({ rc, own, api, decks }) => (
+          {sorted.slice((page - 1) * CARDS_PER_PAGE, page * CARDS_PER_PAGE).map(({ rc, own, api, decks, neededDecks }) => {
+            const ck = cardKey(rc);
+            const onWishlist = (state.wishlist || []).some(w => cardKey(w) === ck);
+            const isNeeded = neededDecks.length > 0;
+            const coveredDecks = decks.filter(d => !neededDecks.includes(d));
+            return (
             <div
-              key={cardKey(rc)}
+              key={ck}
               style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, overflow: 'hidden', transition: 'all .2s', position: 'relative', cursor: 'pointer', opacity: own <= 0 ? .45 : 1 }}
               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--blue)'; }}
               onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
@@ -591,9 +691,9 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
               {own > 0 && (
                 <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,.82)', color: 'var(--yellow)', fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>×{own}</div>
               )}
-              {decks.length > 0 && (
-                <div style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
-                  {decks.length === 1 ? '1 deck' : `${decks.length} decks`}
+              {(decks.length > 0 || onWishlist) && (
+                <div style={{ position: 'absolute', top: 6, left: 6, background: isNeeded ? 'rgba(249,115,22,.9)' : onWishlist && !decks.length ? 'rgba(255,203,5,.9)' : 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
+                  {decks.length > 0 ? (decks.length === 1 ? '1 deck' : `${decks.length} decks`) : '★'}
                 </div>
               )}
               <div style={{ padding: '8px 10px' }}>
@@ -605,15 +705,18 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
                     <span style={{ fontSize: 10, color: 'var(--muted)' }}>${api.marketPrice.toFixed(2)}{own > 1 ? ' ea' : ''}</span>
                   </div>
                 )}
-                {decks.length > 0 && (
-                  <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 3, lineHeight: 1.4 }}>
-                    {decks.slice(0, 2).join(', ')}{decks.length > 2 ? ` +${decks.length - 2}` : ''}
+                {(decks.length > 0 || onWishlist) && (
+                  <div style={{ fontSize: 10, marginTop: 3, lineHeight: 1.5 }}>
+                    {isNeeded && <div style={{ color: 'var(--orange)' }}>Need: {neededDecks.slice(0, 2).join(', ')}{neededDecks.length > 2 ? ` +${neededDecks.length - 2}` : ''}</div>}
+                    {coveredDecks.length > 0 && <div style={{ color: 'var(--green)' }}>{coveredDecks.slice(0, 2).join(', ')}{coveredDecks.length > 2 ? ` +${coveredDecks.length - 2}` : ''}</div>}
+                    {onWishlist && <div style={{ color: 'var(--yellow)' }}>★ Wishlist</div>}
                   </div>
                 )}
               </div>
               <QtyBar rc={rc} state={state} dispatch={dispatch} />
             </div>
-          ))}
+            );
+          })}
         </div>
         {sorted.length > CARDS_PER_PAGE && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--card-border)' }}>
@@ -630,8 +733,12 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
           {playerGroups.slice((page - 1) * CARDS_PER_PAGE, page * CARDS_PER_PAGE).map(({ name, displayEntry, prints, totalOwn }) => {
             const { rc, api } = displayEntry;
             const allDecks = [...new Set(prints.flatMap(p => p.decks))];
+            const allNeededDecks = [...new Set(prints.flatMap(p => p.neededDecks || []))];
+            const onWishlist = (state.wishlist || []).some(w => prints.some(p => cardKey(w) === cardKey(p.rc)));
             const isExpanded = expandedCards.has(name);
             const multiPrint = prints.length > 1;
+            const isNeeded = allNeededDecks.length > 0;
+            const coveredDecks = allDecks.filter(d => !allNeededDecks.includes(d));
             // Sum owned-in-deck copies across all prints of this card
             const inDeck = prints.reduce((s, p) => s + (deckUsage.inDecks[cardKey(p.rc)] || 0), 0);
             const spare = Math.max(0, totalOwn - inDeck);
@@ -648,9 +755,9 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
                 {totalOwn > 0 && (
                   <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,.82)', color: 'var(--yellow)', fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>×{totalOwn}</div>
                 )}
-                {allDecks.length > 0 && (
-                  <div style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
-                    {allDecks.length === 1 ? '1 deck' : `${allDecks.length} decks`}
+                {(allDecks.length > 0 || onWishlist) && (
+                  <div style={{ position: 'absolute', top: 6, left: 6, background: isNeeded ? 'rgba(249,115,22,.9)' : onWishlist && !allDecks.length ? 'rgba(255,203,5,.9)' : 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
+                    {allDecks.length > 0 ? (allDecks.length === 1 ? '1 deck' : `${allDecks.length} decks`) : '★'}
                   </div>
                 )}
                 <div style={{ padding: '8px 10px 6px' }}>
@@ -659,6 +766,13 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
                     ? <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{prints.length} prints</div>
                     : <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{api?.setName || rc.setCode}{rc.num ? ` · ${rc.num}` : ''}</div>
                   }
+                  {(allDecks.length > 0 || onWishlist) && (
+                    <div style={{ fontSize: 10, marginTop: 3, lineHeight: 1.5 }}>
+                      {isNeeded && <div style={{ color: 'var(--orange)' }}>Need: {allNeededDecks.slice(0, 2).join(', ')}{allNeededDecks.length > 2 ? ` +${allNeededDecks.length - 2}` : ''}</div>}
+                      {coveredDecks.length > 0 && <div style={{ color: 'var(--green)' }}>{coveredDecks.slice(0, 2).join(', ')}{coveredDecks.length > 2 ? ` +${coveredDecks.length - 2}` : ''}</div>}
+                      {onWishlist && <div style={{ color: 'var(--yellow)' }}>★ Wishlist</div>}
+                    </div>
+                  )}
                 </div>
                 {/* Collapsible qty bar for player view */}
                 <div onClick={e => e.stopPropagation()}>
@@ -820,8 +934,10 @@ function PlayerCardModal({ group, state, dispatch, getDeckOwned, onClose }) {
   );
 }
 
+const ERA_CANONICAL_ORDER = ['ME', 'SV', 'SWSH', 'SM', 'XY', 'BW', 'HGSS', 'DP', 'Platinum', 'EX', 'ECard', 'Neo', 'Gym', 'Base'];
+
 // ── Browse Tab ────────────────────────────────────────────────────────────────
-function BrowseTab({ state, dispatch }) {
+function BrowseTab({ state, dispatch, getDeckOwned }) {
   const [setsMeta, setSetsMeta] = useState({});
   const [selectedSet, setSelectedSet] = useState(null); // null = set grid, obj = inside a set
   const [query, setQuery] = useState('');
@@ -829,10 +945,21 @@ function BrowseTab({ state, dispatch }) {
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   const [infoCard, setInfoCard] = useState(null);
-  const [sortOwned, setSortOwned] = useState(false); // false = card order, true = owned first
+  // Inside-a-set controls
+  const [cardSort, setCardSort] = useState('number');      // 'number' | 'name' | 'price' | 'owned'
+  const [cardFilter, setCardFilter] = useState('all');     // 'all' | 'collection' | 'decks' | 'both' | 'needed' | 'unowned'
+  // Set-grid controls
+  const [gridSort, setGridSort] = useState('era');      // 'era' | 'completion' | 'value' | 'name'
+  const [eraFilter, setEraFilter] = useState('');
+  const [browseFormat, setBrowseFormat] = useState('All');
+  const [browseEraCode, setBrowseEraCode] = useState('');
+  const [browseSort, setBrowseSort] = useState('set-new');
   const searchTimer = useRef(null);
+
+  const BROWSE_EXPANDED_ERAS = new Set(['BW', 'XY', 'SM', 'SWSH', 'SV', 'ME']);
 
   useEffect(() => { fetchSetsMetadata().then(setSetsMeta); }, []);
 
@@ -844,30 +971,93 @@ function BrowseTab({ state, dispatch }) {
 
   // Query search within a set or global
   useEffect(() => {
-    if (selectedSet) return; // set browsing handled above
-    if (!query) { setResults([]); setTotalCount(0); return; }
+    if (selectedSet) return;
+    if (!query) { setResults([]); setTotalCount(0); setHasMore(false); return; }
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => runSearch(1, null, query), 400);
     return () => clearTimeout(searchTimer.current);
   }, [query]);
 
+  // Re-run active search when format/era changes
+  useEffect(() => {
+    if (selectedSet) runSearch(1, selectedSet.id, '');
+    else if (query) runSearch(1, null, query);
+  }, [browseFormat, browseEraCode]);
+
+  function isCardLegalForBrowse(card) {
+    if (browseFormat === 'Standard') return card.legalities?.standard === 'Legal';
+    if (browseFormat === 'Expanded' || browseFormat === 'GLC') return card.legalities?.expanded === 'Legal';
+    if (browseEraCode) return checkEraLegality({ setCode: card.setCode, num: card.number }, browseEraCode).legal;
+    return true;
+  }
+
   async function runSearch(p = 1, setId = null, q = query) {
     if (!setId && !q) return;
     setLoading(true);
-    const { cards, totalCount } = await searchCards(q, setId, p);
-    // Cache cards so set grid can compute total set value
-    if (cards.length > 0) {
-      const updates = {};
-      for (const card of cards) {
-        const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
-        updates[ck] = card;
+
+    // ── Set browsing: load all cards, format filtering handled by displayResults ──
+    if (setId) {
+      let cards = [], total = 0;
+      const isTCGDexSet = TCGDEX_SET_TOTALS[setId] != null;
+      if (!isTCGDexSet) {
+        ({ cards, totalCount: total } = await searchCards(q, setId, p));
+        if (total === 0 && selectedSet?.code)
+          ({ cards, totalCount: total } = await searchCards('', null, p, selectedSet.code));
       }
-      dispatch({ type: 'SET_API_DATA', updates });
+      if (total === 0) {
+        const tcgCards = await fetchTCGDexSet(setId, selectedSet?.code || '', selectedSet?.name || '');
+        if (tcgCards.length > 0) {
+          const updates = {};
+          for (const card of tcgCards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+          dispatch({ type: 'SET_API_DATA', updates });
+          setResults(tcgCards); setTotalCount(tcgCards.length); setPage(1); setHasMore(false); setLoading(false);
+          return;
+        }
+      }
+      if (cards.length > 0) {
+        const updates = {};
+        for (const card of cards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+        dispatch({ type: 'SET_API_DATA', updates });
+      }
+      setResults(prev => {
+        if (p === 1) return cards;
+        const seen = new Set(prev.map(c => `${c.setCode}||${c.number}`));
+        return [...prev, ...cards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
+      });
+      setTotalCount(total); setPage(p); setHasMore(false); setLoading(false);
+      return;
     }
-    setResults(p === 1 ? cards : prev => [...prev, ...cards]);
-    setTotalCount(totalCount);
-    setPage(p);
-    setLoading(false);
+
+    // ── Global search: filter by format, auto-advance pages if needed ──
+    const isFiltered = browseFormat !== 'All' || !!browseEraCode;
+    let currentPage = p;
+    let newCards = [];
+    let lastTotal = 0;
+    let morePages = false;
+    while (true) {
+      const { cards, totalCount } = await searchCards(q, null, currentPage);
+      lastTotal = totalCount;
+      if (cards.length > 0) {
+        const updates = {};
+        for (const card of cards) updates[cardKey({ name: card.name, setCode: card.setCode, num: card.number })] = card;
+        dispatch({ type: 'SET_API_DATA', updates });
+      }
+      const sortedPage = [...cards].sort((a, b) => {
+        const sDiff = (SET_ORDER[b.setCode] ?? 0) - (SET_ORDER[a.setCode] ?? 0);
+        if (sDiff !== 0) return sDiff;
+        return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      const pageCards = isFiltered ? sortedPage.filter(isCardLegalForBrowse) : sortedPage;
+      newCards = [...newCards, ...pageCards];
+      if (cards.length === 0 || currentPage * 20 >= lastTotal) { morePages = false; break; }
+      if (!isFiltered) { morePages = currentPage * 20 < lastTotal; break; }
+      currentPage++;
+    }
+    setResults(p === 1 ? newCards : prev => {
+      const seen = new Set(prev.map(c => `${c.setCode}||${c.number}`));
+      return [...prev, ...newCards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
+    });
+    setTotalCount(lastTotal); setPage(currentPage); setHasMore(morePages); setLoading(false);
   }
 
   function setVariantQty(card, variant, delta) {
@@ -887,8 +1077,23 @@ function BrowseTab({ state, dispatch }) {
     return val[variant] || 0;
   }
 
-  function getQty(card) {
+  function getCollectionQty(card) {
     return collQty(state.collection[cardKey({ name: card.name, setCode: card.setCode, num: card.number })]);
+  }
+
+  function getDeckQty(card) {
+    const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
+    let total = 0;
+    for (const deck of state.decks) {
+      if (deck.isBuyList) continue;
+      const rc = deck.rawCards.find(r => cardKey(r) === ck);
+      if (rc) total += sumOwnedArr(deck.ownedMap?.[ck], rc.qty);
+    }
+    return total;
+  }
+
+  function getQty(card) {
+    return getCollectionQty(card) + getDeckQty(card);
   }
 
   // Compute per-set stats.
@@ -909,162 +1114,310 @@ function BrowseTab({ state, dispatch }) {
       if (!stats[sid]) stats[sid] = { owned: 0, value: 0, totalValue: 0, cachedCount: 0 };
       let totalOwned = 0;
       for (const deck of state.decks) {
+        if (deck.isBuyList) continue;
         const rc = deck.rawCards.find(r => cardKey(r) === ck);
-        if (rc) totalOwned += Math.min(rc.qty, deck.ownedMap?.[ck] ?? 0);
+        if (rc) totalOwned += sumOwnedArr(deck.ownedMap?.[ck], rc.qty);
       }
       const standalone = collQty(state.collection[ck]);
       const owned = totalOwned + standalone;
       if (owned > 0) {
-        stats[sid].owned += owned;
+        stats[sid].owned += 1; // count unique card designs, not total copies
         stats[sid].value += owned * (apiData.marketPrice || 0);
       }
     }
     return stats;
   }, [state.apiCache, state.decks, state.collection]);
 
+  // Keys for cards that are needed: either in a deck with insufficient owned copies, or on the wishlist
+  const neededKeys = useMemo(() => {
+    const keys = new Set();
+    for (const deck of state.decks) {
+      if (deck.isBuyList) continue;
+      for (const rc of deck.rawCards) {
+        if (rc.qty - getDeckOwned(deck, rc) > 0) keys.add(cardKey(rc));
+      }
+    }
+    for (const item of (state.wishlist || [])) keys.add(cardKey(item));
+    return keys;
+  }, [state.decks, state.wishlist, getDeckOwned]);
+
+  // Maps cardKey → { deckNames, neededDecks } for badge + info in set view
+  const deckUsageMap = useMemo(() => {
+    const map = {};
+    for (const deck of state.decks) {
+      if (deck.isBuyList) continue;
+      for (const rc of deck.rawCards) {
+        const ck = cardKey(rc);
+        if (!map[ck]) map[ck] = { deckNames: [], neededDecks: [] };
+        if (!map[ck].deckNames.includes(deck.name)) map[ck].deckNames.push(deck.name);
+        const owned = sumOwnedArr(deck.ownedMap?.[ck], rc.qty);
+        if (rc.qty - owned > 0 && !map[ck].neededDecks.includes(deck.name)) {
+          map[ck].neededDecks.push(deck.name);
+        }
+      }
+    }
+    return map;
+  }, [state.decks]);
+
+  // Processed results for inside-a-set view
+  const displayResults = useMemo(() => {
+    let list = results;
+    if (cardFilter === 'collection') list = list.filter(c => getCollectionQty(c) > 0);
+    if (cardFilter === 'decks')      list = list.filter(c => getDeckQty(c) > 0);
+    if (cardFilter === 'both')       list = list.filter(c => getQty(c) > 0);
+    if (cardFilter === 'needed')     list = list.filter(c => neededKeys.has(cardKey({ name: c.name, setCode: c.setCode, num: c.number })));
+    if (cardFilter === 'unowned')    list = list.filter(c => getQty(c) === 0);
+    if (browseFormat === 'Standard') list = list.filter(c => c.legalities?.standard === 'Legal');
+    else if (browseFormat === 'Expanded') list = list.filter(c => c.legalities?.expanded === 'Legal');
+    else if (browseFormat === 'GLC')     list = list.filter(c => c.legalities?.expanded === 'Legal');
+    else if (browseEraCode)              list = list.filter(c => checkEraLegality({ setCode: c.setCode, num: c.number }, browseEraCode).legal);
+    list = [...list];
+    if (selectedSet) {
+      if (cardSort === 'number') list.sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+      if (cardSort === 'name')   list.sort((a, b) => a.name.localeCompare(b.name));
+      if (cardSort === 'price')  list.sort((a, b) => (b.marketPrice || 0) - (a.marketPrice || 0));
+      if (cardSort === 'owned')  list.sort((a, b) => {
+        const diff = getQty(b) - getQty(a);
+        return diff !== 0 ? diff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+    } else {
+      // Global search sort (results already in chronological order from runSearch; re-sort if user changes)
+      if (browseSort === 'set-new') list.sort((a, b) => {
+        const sDiff = (SET_ORDER[b.setCode] ?? 0) - (SET_ORDER[a.setCode] ?? 0);
+        return sDiff !== 0 ? sDiff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      if (browseSort === 'set-old') list.sort((a, b) => {
+        const sDiff = (SET_ORDER[a.setCode] ?? 0) - (SET_ORDER[b.setCode] ?? 0);
+        return sDiff !== 0 ? sDiff : (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
+      });
+      if (browseSort === 'name')       list.sort((a, b) => a.name.localeCompare(b.name));
+      if (browseSort === 'price-desc') list.sort((a, b) => (b.marketPrice || 0) - (a.marketPrice || 0));
+      if (browseSort === 'price-asc')  list.sort((a, b) => (a.marketPrice || 0) - (b.marketPrice || 0));
+    }
+    return list;
+  }, [results, cardSort, browseSort, cardFilter, selectedSet, state.collection, neededKeys]);
+
+  // Set grid — sorted and filtered
+  const allSets = useMemo(() => {
+    let sets = ALL_SETS.filter(s => !eraFilter || s.era === eraFilter);
+    if (browseFormat === 'Standard') {
+      sets = sets.filter(s => SET_MIN_MARK[s.code] >= STANDARD_MIN_MARK);
+    } else if (browseFormat === 'Expanded' || browseFormat === 'GLC') {
+      sets = sets.filter(s => BROWSE_EXPANDED_ERAS.has(s.era));
+    } else if (browseEraCode) {
+      const parts = browseEraCode.split('-');
+      const fromCode = parts[0].trim().toUpperCase();
+      const toCode = (parts[1] || parts[0]).trim().toUpperCase();
+      const allCodes = ALL_SETS.map(s => s.code);
+      const fromIdx = allCodes.indexOf(fromCode);
+      const toIdx = allCodes.indexOf(toCode);
+      const noteAllowed = new Set(getEraPromoAllowances(browseEraCode).keys());
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const min = Math.min(fromIdx, toIdx);
+        const max = Math.max(fromIdx, toIdx);
+        sets = sets.filter(s => {
+          const i = allCodes.indexOf(s.code);
+          return (i >= min && i <= max) || noteAllowed.has(s.code);
+        });
+      }
+    }
+    if (gridSort === 'name')       sets = [...sets].sort((a, b) => a.name.localeCompare(b.name));
+    if (gridSort === 'completion') sets = [...sets].sort((a, b) => {
+      const sa = setStats[a.id] || {}, sb = setStats[b.id] || {};
+      const ta = setsMeta[a.id]?.total || TCGDEX_SET_TOTALS[a.id] || 0;
+      const tb = setsMeta[b.id]?.total || TCGDEX_SET_TOTALS[b.id] || 0;
+      const pa = ta > 0 ? sa.owned / ta : 0, pb = tb > 0 ? sb.owned / tb : 0;
+      return pb - pa;
+    });
+    if (gridSort === 'value') sets = [...sets].sort((a, b) =>
+      (setStats[b.id]?.value || 0) - (setStats[a.id]?.value || 0)
+    );
+    return sets;
+  }, [eraFilter, browseFormat, browseEraCode, gridSort, setStats, setsMeta]);
+
+  const allEras = useMemo(() => ERA_CANONICAL_ORDER.filter(e => ALL_SETS.some(s => s.era === e)), []);
+
+  // Format select — shared between set grid toolbar and inside-set/search header
+  const browseActiveColor = browseEraCode ? 'var(--era)' : browseFormat === 'Standard' ? 'var(--std)' : browseFormat === 'Expanded' ? 'var(--exp)' : browseFormat === 'GLC' ? 'var(--glc)' : 'var(--muted)';
+  const browseIsActive = browseEraCode || browseFormat !== 'All';
+  const browseSelectValue = browseEraCode ? `era:${browseEraCode}` : `fmt:${browseFormat}`;
+  const formatSelectEl = (
+    <select value={browseSelectValue} onChange={e => {
+      const v = e.target.value;
+      if (v.startsWith('era:')) { setBrowseEraCode(v.slice(4)); setBrowseFormat('All'); }
+      else { setBrowseFormat(v.slice(4)); setBrowseEraCode(''); }
+    }} style={{
+      padding: '8px 10px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+      border: `2px solid ${browseIsActive ? browseActiveColor : 'var(--card-border)'}`,
+      background: browseIsActive ? `color-mix(in srgb, ${browseActiveColor} 12%, transparent)` : 'var(--darker)',
+      color: browseIsActive ? browseActiveColor : 'var(--muted)',
+      fontFamily: "'Outfit',sans-serif", fontWeight: 700,
+    }}>
+      <option value="fmt:All">All Formats</option>
+      <optgroup label="Formats">
+        {['Standard', 'Expanded', 'GLC'].map(f => <option key={f} value={`fmt:${f}`}>{f}</option>)}
+      </optgroup>
+      <optgroup label="─────────────" disabled />
+      {Object.entries(ERA_GROUPS).map(([group, formats]) => (
+        <optgroup key={group} label={group}>
+          {formats.map(f => <option key={f.code} value={`era:${f.code}`}>{f.label}</option>)}
+        </optgroup>
+      ))}
+    </select>
+  );
+
   // Set grid view
   if (!selectedSet && !query) {
+    const groupedSets = gridSort === 'era' ? groupByEra(allSets) : null;
     return (
       <div>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        {/* Set grid toolbar */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search card name across all sets…"
-            style={{ flex: 1, padding: '9px 14px' }} />
+            style={{ flex: 1, minWidth: 180, padding: '9px 14px' }} />
+          {formatSelectEl}
+          <select value={eraFilter} onChange={e => setEraFilter(e.target.value)}
+            style={{ padding: '8px 10px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--fg)', fontSize: 12 }}>
+            <option value="">All eras</option>
+            {allEras.map(e => <option key={e} value={e}>{e}</option>)}
+          </select>
+          <select value={gridSort} onChange={e => setGridSort(e.target.value)}
+            style={{ padding: '8px 10px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 8, color: 'var(--fg)', fontSize: 12 }}>
+            <option value="era">Era order</option>
+            <option value="completion">Completion %</option>
+            <option value="value">My value</option>
+            <option value="name">Name A–Z</option>
+          </select>
         </div>
-        {Object.entries(groupByEra(ALL_SETS)).map(([era, sets]) => (
-          <div key={era} style={{ marginBottom: 28 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--yellow)', marginBottom: 12, letterSpacing: 1, textTransform: 'uppercase', borderBottom: '2px solid var(--card-border)', paddingBottom: 6 }}>{era}</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
-              {sets.map(s => {
-                const meta = setsMeta[s.id] || {};
-                const stats = setStats[s.id] || { owned: 0, value: 0 };
-                const total = meta.total || 0;
-                const pct = total > 0 ? Math.round((stats.owned / total) * 100) : 0;
-                return (
-                  <div key={s.code} onClick={() => setSelectedSet(s)}
-                    style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, padding: '12px 14px', cursor: 'pointer', transition: 'all .15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--yellow)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; e.currentTarget.style.transform = ''; }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                      <div style={{ background: '#111', borderRadius: 6, padding: '4px 6px', minWidth: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {meta.symbol
-                          ? <img src={meta.symbol} alt="" style={{ height: 22, width: 'auto', objectFit: 'contain' }} />
-                          : <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 800 }}>{s.code}</span>
-                        }
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{s.name}</div>
-                        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${meta.releaseDate.slice(0,7)}` : ''}</div>
-                      </div>
-                    </div>
-                    {meta.logo && (
-                      <div style={{ background: '#0a0a18', borderRadius: 8, padding: '8px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 52 }}>
-                        <img src={meta.logo} alt={s.name} style={{ maxHeight: 44, maxWidth: '100%', objectFit: 'contain' }} />
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, marginBottom: 4 }}>
-                      <span style={{ color: stats.owned > 0 ? 'var(--green)' : 'var(--muted)', fontWeight: 700 }}>
-                        {stats.owned}/{total > 0 ? total : '?'}
-                      </span>
-                      {stats.totalValue > 0 && (() => {
-                        const partial = total > 0 && stats.cachedCount < total;
-                        return (
-                          <span style={{ color: 'var(--muted)', fontWeight: 700 }}
-                            title={partial
-                              ? `Partial — ${stats.cachedCount}/${total} cards cached. Browse the set to load all prices. You own: $${stats.value.toFixed(2)}`
-                              : `Full set value. You own: $${stats.value.toFixed(2)}`}>
-                            {partial ? '~' : ''}${stats.totalValue.toFixed(2)}
-                          </span>
-                        );
-                      })()}
-                      <span style={{ color: pct > 0 ? 'var(--yellow)' : 'var(--muted)' }}>{pct}%</span>
-                    </div>
-                    <div style={{ height: 4, background: 'var(--pill)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--green)' : 'var(--yellow)', borderRadius: 2, transition: 'width .3s' }} />
-                    </div>
-                  </div>
-                );
-              })}
+        {groupedSets
+          ? Object.entries(groupedSets).map(([era, sets]) => (
+            <div key={era} style={{ marginBottom: 28 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--yellow)', marginBottom: 12, letterSpacing: 1, textTransform: 'uppercase', borderBottom: '2px solid var(--card-border)', paddingBottom: 6 }}>{era}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+                {sets.map(s => <SetTile key={s.code} s={s} setsMeta={setsMeta} setStats={setStats} onClick={() => setSelectedSet(s)} />)}
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+          : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+              {allSets.map(s => <SetTile key={s.code} s={s} setsMeta={setsMeta} setStats={setStats} onClick={() => setSelectedSet(s)} />)}
+            </div>
+          )
+        }
       </div>
     );
   }
-
   // Inside a set or global search results
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn btn-ghost btn-sm" onClick={() => { setSelectedSet(null); setQuery(''); setResults([]); }}>← Back</button>
         {selectedSet
           ? <span style={{ fontWeight: 800, fontSize: 13 }}>{selectedSet.name} <span style={{ color: 'var(--muted)', fontSize: 11 }}>({selectedSet.code})</span></span>
           : <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search…" style={{ flex: 1, padding: '8px 14px' }} autoFocus />
         }
-        {!selectedSet && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{loading ? 'Searching…' : `${totalCount} results`}</span>}
+        {!selectedSet && <span style={{ fontSize: 11, color: 'var(--muted)' }}>{loading ? 'Searching…' : `${results.length} result${results.length !== 1 ? 's' : ''}`}</span>}
+        {formatSelectEl}
         {selectedSet && (
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button className={`btn btn-sm ${sortOwned ? 'btn-primary' : 'btn-ghost'}`}
-              style={{ fontSize: 10, padding: '4px 10px' }}
-              onClick={() => setSortOwned(s => !s)}
-              title="Sort: owned first / unowned first">
-              {sortOwned ? 'Owned first' : 'Set order'}
-            </button>
-            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{loading ? 'Loading…' : `${results.length} cards`}</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {/* Filter */}
+            {[
+              { key: 'all',        label: 'All' },
+              { key: 'both',       label: 'Owned' },
+              { key: 'collection', label: 'In Collection' },
+              { key: 'decks',      label: 'In Decks' },
+              { key: 'needed',     label: 'Needed' },
+              { key: 'unowned',    label: 'Unowned' },
+            ].map(({ key, label }) => (
+              <button key={key} className={`btn btn-sm ${cardFilter === key ? 'btn-yellow' : 'btn-ghost'}`}
+                style={{ fontSize: 10, padding: '4px 10px' }}
+                onClick={() => setCardFilter(key)}>{label}</button>
+            ))}
+            <div style={{ width: 1, height: 16, background: 'var(--card-border)' }} />
+            {/* Sort */}
+            <select value={cardSort} onChange={e => setCardSort(e.target.value)}
+              style={{ padding: '4px 8px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 6, color: 'var(--fg)', fontSize: 11 }}>
+              <option value="number">Set order</option>
+              <option value="name">Name A–Z</option>
+              <option value="price">Price ↓</option>
+              <option value="owned">Owned first</option>
+            </select>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+              {loading ? 'Loading…' : `${displayResults.length}${cardFilter !== 'all' ? `/${results.length}` : ''} cards`}
+            </span>
           </div>
+        )}
+        {!selectedSet && (
+          <select value={browseSort} onChange={e => setBrowseSort(e.target.value)}
+            style={{ padding: '4px 8px', background: 'var(--darker)', border: '1px solid var(--card-border)', borderRadius: 6, color: 'var(--fg)', fontSize: 11 }}>
+            <option value="set-new">Newest first</option>
+            <option value="set-old">Oldest first</option>
+            <option value="name">Name A–Z</option>
+            <option value="price-desc">Price (high → low)</option>
+            <option value="price-asc">Price (low → high)</option>
+          </select>
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-        {(sortOwned
-            ? [...results].sort((a, b) => {
-                const qa = getQty(a), qb = getQty(b);
-                if (qa > 0 && qb === 0) return -1;
-                if (qa === 0 && qb > 0) return 1;
-                return (parseInt(a.number) || 0) - (parseInt(b.number) || 0);
-              })
-            : results
-          ).map(card => {
-          const qty = getQty(card);
-          const cardMeta = setsMeta[card.setId] || {};
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 12 }}>
+        {displayResults.map(card => {
+          const collQtyVal = getCollectionQty(card);
+          const deckQtyVal = getDeckQty(card);
+          const qty = collQtyVal + deckQtyVal;
+          const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
+          const usage = deckUsageMap[ck] || { deckNames: [], neededDecks: [] };
+          const { deckNames, neededDecks } = usage;
+          const onWishlist = (state.wishlist || []).some(w => cardKey(w) === ck);
+          const isNeeded = neededDecks.length > 0;
+          const coveredDecks = deckNames.filter(d => !neededDecks.includes(d));
           const rc = { name: card.name, setCode: card.setCode, num: card.number };
           return (
             <div key={card.id} onClick={() => setSelectedCard(card)}
-              style={{ background: 'var(--card-bg)', border: `2px solid ${qty > 0 ? 'var(--green)' : 'var(--card-border)'}`, borderRadius: 10, overflow: 'hidden', cursor: 'pointer', transition: 'all .15s', position: 'relative' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--yellow)'; e.currentTarget.style.transform = 'scale(1.02)'; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = qty > 0 ? 'var(--green)' : 'var(--card-border)'; e.currentTarget.style.transform = ''; }}
+              style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, overflow: 'hidden', cursor: 'pointer', transition: 'all .2s', position: 'relative', opacity: qty <= 0 ? 0.45 : 1 }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--blue)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
             >
               {card.imageSmall
                 ? <img src={card.imageSmall} alt={card.name} style={{ width: '100%', display: 'block' }} loading="lazy" />
-                : <div style={{ height: 80, background: 'var(--pill)' }} />
+                : <div style={{ height: 90, background: 'var(--pill)' }} />
               }
               {qty > 0 && (
-                <div style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(74,222,128,.9)', color: '#000', fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 11, padding: '1px 5px', borderRadius: 4 }}>×{qty}</div>
-              )}
-              {/* Card info button */}
-              <button
-                style={{ position: 'absolute', top: 4, left: 4, width: 20, height: 20, borderRadius: '50%', background: 'rgba(0,0,0,.7)', border: 'none', color: 'var(--muted)', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}
-                onClick={e => { e.stopPropagation(); setInfoCard(card); }}
-                title="Card info"
-              >ℹ</button>
-              <div style={{ padding: '6px 8px' }}>
-                <div style={{ fontWeight: 800, fontSize: 10, lineHeight: 1.3 }}>{card.name}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                  {cardMeta.symbol && <img src={cardMeta.symbol} alt="" style={{ height: 14, width: 'auto', flexShrink: 0 }} />}
-                  <span style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.3, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {card.setName || card.setCode} #{card.number}
-                  </span>
+                <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,.82)', color: 'var(--yellow)', fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 11, padding: '2px 6px', borderRadius: 4 }}
+                  title={collQtyVal > 0 && deckQtyVal > 0 ? `${collQtyVal} in collection, ${deckQtyVal} in decks` : collQtyVal > 0 ? 'In collection' : 'In decks'}>
+                  ×{qty}
                 </div>
-                {card.marketPrice && <div style={{ fontSize: 9, color: 'var(--green)', fontWeight: 700 }}>${card.marketPrice.toFixed(2)}</div>}
+              )}
+              {(deckNames.length > 0 || onWishlist) && (
+                <div style={{ position: 'absolute', top: 6, left: 6, background: isNeeded ? 'rgba(249,115,22,.9)' : onWishlist && !deckNames.length ? 'rgba(255,203,5,.9)' : 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
+                  {deckNames.length > 0 ? (deckNames.length === 1 ? '1 deck' : `${deckNames.length} decks`) : '★'}
+                </div>
+              )}
+              <div style={{ padding: '8px 10px' }}>
+                <div style={{ fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{card.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{card.setName || card.setCode}{card.number ? ` · ${card.number}` : ''}</div>
+                {card.marketPrice != null && (
+                  <div style={{ display: 'flex', gap: 5, alignItems: 'baseline', marginTop: 2 }}>
+                    {qty > 1 && <span style={{ fontSize: 11, color: 'var(--green)', fontWeight: 700 }}>${(card.marketPrice * qty).toFixed(2)}</span>}
+                    <span style={{ fontSize: 10, color: 'var(--muted)' }}>${card.marketPrice.toFixed(2)}{qty > 1 ? ' ea' : ''}</span>
+                  </div>
+                )}
+                {(deckNames.length > 0 || onWishlist) && (
+                  <div style={{ fontSize: 10, marginTop: 3, lineHeight: 1.5 }}>
+                    {isNeeded && <div style={{ color: 'var(--orange)' }}>Need: {neededDecks.slice(0, 2).join(', ')}{neededDecks.length > 2 ? ` +${neededDecks.length - 2}` : ''}</div>}
+                    {coveredDecks.length > 0 && <div style={{ color: 'var(--green)' }}>{coveredDecks.slice(0, 2).join(', ')}{coveredDecks.length > 2 ? ` +${coveredDecks.length - 2}` : ''}</div>}
+                    {onWishlist && <div style={{ color: 'var(--yellow)' }}>★ Wishlist</div>}
+                  </div>
+                )}
               </div>
               <QtyBar rc={rc} state={state} dispatch={dispatch} />
             </div>
           );
         })}
       </div>
-      {!selectedSet && results.length < totalCount && (
-        <button className="btn btn-ghost" style={{ width: '100%', marginTop: 12 }} onClick={() => runSearch(page + 1, null, query)}>
-          Load more ({results.length}/{totalCount})
+      {hasMore && !selectedSet && (
+        <button className="btn btn-ghost" style={{ width: '100%', marginTop: 12 }}
+          onClick={() => runSearch(page + 1, null, query)}>
+          Load more
         </button>
       )}
 
@@ -1074,6 +1427,19 @@ function BrowseTab({ state, dispatch }) {
           getVariantQty={getVariantQty}
           setVariantQty={setVariantQty}
           onClose={() => setSelectedCard(null)}
+          onCardInfo={card => setInfoCard(card)}
+          dispatch={dispatch}
+          wishlist={state.wishlist || []}
+          deckUsages={(() => {
+            const ck = cardKey({ name: selectedCard.name, setCode: selectedCard.setCode, num: selectedCard.number });
+            return state.decks
+              .filter(d => !d.isBuyList)
+              .flatMap(d => {
+                const rc = d.rawCards.find(r => cardKey(r) === ck);
+                if (!rc) return [];
+                return [{ deck: d, qty: rc.qty, owned: sumOwnedArr(d.ownedMap?.[ck], rc.qty) }];
+              });
+          })()}
         />
       )}
       {infoCard && <CardInfoModal card={infoCard} onClose={() => setInfoCard(null)} />}
@@ -1081,11 +1447,92 @@ function BrowseTab({ state, dispatch }) {
   );
 }
 
-// ── Browse Card Variant Modal ─────────────────────────────────────────────────
-function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose }) {
+// ── Set Tile ──────────────────────────────────────────────────────────────────
+function SetTile({ s, setsMeta, setStats, onClick }) {
+  const meta = setsMeta[s.id] || {};
+  const stats = setStats[s.id] || { owned: 0, value: 0 };
+  const total = meta.total || TCGDEX_SET_TOTALS[s.id] || 0;
+  const pct = total > 0 ? Math.round((stats.owned / total) * 100) : 0;
+  return (
+    <div onClick={onClick}
+      style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, padding: '12px 14px', cursor: 'pointer', transition: 'all .15s' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--yellow)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--card-border)'; e.currentTarget.style.transform = ''; }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <div style={{ background: '#111', borderRadius: 6, padding: '4px 6px', minWidth: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {meta.symbol
+            ? <img src={meta.symbol} alt="" style={{ height: 22, width: 'auto', objectFit: 'contain' }} />
+            : <span style={{ fontSize: 9, color: 'var(--muted)', fontWeight: 800 }}>{s.code}</span>
+          }
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{s.name}</div>
+          <div style={{ fontSize: 10, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${meta.releaseDate.slice(0,7)}` : ''}</div>
+        </div>
+      </div>
+      {meta.logo && (
+        <div style={{ background: '#0a0a18', borderRadius: 8, padding: '8px', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 52 }}>
+          <img src={meta.logo} alt={s.name} style={{ maxHeight: 44, maxWidth: '100%', objectFit: 'contain' }} />
+        </div>
+      )}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, marginBottom: 4 }}>
+        <span style={{ color: stats.owned > 0 ? 'var(--green)' : 'var(--muted)', fontWeight: 700 }}>
+          {stats.owned}/{total > 0 ? total : '?'}
+        </span>
+        {stats.totalValue > 0 && (() => {
+          const partial = total > 0 && stats.cachedCount < total;
+          return (
+            <span style={{ color: 'var(--muted)', fontWeight: 700 }}
+              title={partial
+                ? `Partial — ${stats.cachedCount}/${total} cards cached. Browse the set to load all prices. You own: $${stats.value.toFixed(2)}`
+                : `Full set value. You own: $${stats.value.toFixed(2)}`}>
+              {partial ? '~' : ''}${stats.totalValue.toFixed(2)}
+            </span>
+          );
+        })()}
+        <span style={{ color: pct > 0 ? 'var(--yellow)' : 'var(--muted)' }}>{pct}%</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--pill)', borderRadius: 2, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--green)' : 'var(--yellow)', borderRadius: 2, transition: 'width .3s' }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Energy cost dots (used in BrowseCardModal attacks) ───────────────────────
+const ENERGY_COLOR = {
+  Fire:'#e8460a', Water:'#4a90d9', Grass:'#3a9a3a', Lightning:'#e8c200',
+  Psychic:'#9b59b6', Fighting:'#b87333', Darkness:'#555', Metal:'#8e9dad',
+  Dragon:'#7b68ee', Fairy:'#e91e8c', Colorless:'#aaa',
+};
+function EnergyCost({ cost }) {
+  if (!cost?.length) return null;
+  return (
+    <span style={{ display:'inline-flex', gap:2, verticalAlign:'middle', marginRight:4 }}>
+      {cost.map((type, i) => (
+        <span key={i} style={{ display:'inline-block', width:14, height:14, borderRadius:'50%',
+          background: ENERGY_COLOR[type]||'#aaa', border:'1px solid rgba(255,255,255,.2)',
+          fontSize:7, color:'#fff', textAlign:'center', lineHeight:'14px', fontWeight:800 }}
+          title={type}>{type[0]}</span>
+      ))}
+    </span>
+  );
+}
+
+// ── Browse Card Modal (card info + collection tracking + deck usage) ──────────
+function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardInfo, deckUsages = [], dispatch, wishlist = [] }) {
+  const [activeCard, setActiveCard] = useState(card);
+  const baseCardRef = useRef(card); // tracks the patched version of the original card
+  const [altPrints, setAltPrints] = useState([]);
+  const [loadingAlts, setLoadingAlts] = useState(false);
+  const [decksOpen, setDecksOpen] = useState(true);
   const [stampedCard, setStampedCard] = useState(null);
   const [loadingStamped, setLoadingStamped] = useState(true);
   const [prizePackPrice, setPrizePackPrice] = useState(null);
+
+  // Sync activeCard when parent changes the card prop (shouldn't happen, but safe)
+  useEffect(() => { setActiveCard(card); setAltPrints([]); }, [card?.id]);
 
   // Check Prize Pack lookup: same name + number exists as a Prize Pack Series card on TCGPlayer.
   const normName = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
@@ -1104,6 +1551,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose }) {
 
   useEffect(() => {
     setLoadingStamped(true);
+    setLoadingAlts(true);
 
     function isPromoSet(p) {
       const id = p.setId?.toLowerCase() ?? '';
@@ -1119,13 +1567,57 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose }) {
       );
     }
 
-    // Pass 1: strict (same HP + attacks)
+    // Pass 1: strict (same HP + attacks) — also used for alt prints list
     fetchAllPrints(card.name, {
       supertype: card.supertype,
       hp: card.hp,
       attackNames: card.attacks,
       attacksFull: card.attacksFull,
     }).then(async prints => {
+      // Same-slot duplicate: different id, same set+number. Merge richer data, exclude from list.
+      const normNum = n => String(n || '').replace(/^0+/, '') || '0';
+      const sameSetAs = (a, b) =>
+        (a.setId && b.setId && a.setId === b.setId) ||
+        (a.setCode && b.setCode && a.setCode === b.setCode) ||
+        (a.setName && b.setName && a.setName === b.setName);
+      const isSameSlot = p =>
+        p.id !== card.id &&
+        normNum(p.number) === normNum(card.number) &&
+        sameSetAs(p, card);
+      const scoreCard = c => (c.rules?.length || 0) + (c.abilities?.length || 0) +
+        (c.attacksFull?.length || 0) + (c.nationalPokedexNumbers?.length || 0) +
+        (c.marketPrice != null ? 1 : 0);
+
+      const freshSelf = prints.find(p => p.id === card.id);
+      const sameSlot  = prints.find(isSameSlot);
+      const donor = (sameSlot && scoreCard(sameSlot) >= scoreCard(freshSelf || card))
+        ? sameSlot : (freshSelf || sameSlot);
+      if (donor) {
+        setActiveCard(prev => {
+          if (!prev || prev.id !== card.id) return prev;
+          const patched = {
+            ...prev,
+            rules:               donor.rules?.length               ? donor.rules               : (prev.rules || []),
+            abilities:           donor.abilities?.length            ? donor.abilities            : (prev.abilities || []),
+            attacksFull:         donor.attacksFull?.length          ? donor.attacksFull          : (prev.attacksFull || []),
+            attacks:             donor.attacks?.length              ? donor.attacks              : (prev.attacks || []),
+            nationalPokedexNumbers: donor.nationalPokedexNumbers?.length ? donor.nationalPokedexNumbers : (prev.nationalPokedexNumbers || []),
+          };
+          baseCardRef.current = patched;
+          return patched;
+        });
+      }
+
+      const altMap = new Map();
+      for (const p of prints) {
+        if (p.id === card.id || isSameSlot(p)) continue;
+        const key = `${normNum(p.number)}||${p.setId || p.setCode || p.setName}`;
+        const ex = altMap.get(key);
+        if (!ex || scoreCard(p) > scoreCard(ex)) altMap.set(key, p);
+      }
+      setAltPrints([...altMap.values()]);
+      setLoadingAlts(false);
+
       let stamped = prints.find(p => p.id !== card.id && p.setId !== card.setId && isPromoSet(p));
 
       // Pass 2: loose (name-only) — catches promos with slightly different stats
@@ -1182,46 +1674,222 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose }) {
   }
 
   const visibleVariants = VARIANTS.filter(v => isVariantAvailable(v.key));
-  const total = VARIANTS.reduce((s, v) => s + getVariantQty(card, v.key), 0);
+  const collectionTotal = VARIANTS.reduce((s, v) => s + getVariantQty(card, v.key), 0);
+  const deckTotal = deckUsages.reduce((s, u) => s + u.owned, 0);
+  const total = collectionTotal + deckTotal;
+
+  const displayCard = activeCard || card;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 16 }}>
-          {card.imageSmall && (
-            <img src={card.imageLarge || card.imageSmall} alt={card.name}
-              style={{ width: 110, borderRadius: 8, flexShrink: 0 }} />
-          )}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ margin: '0 0 4px' }}>{card.name}</h3>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 14 }}>
-              {card.setName} · #{card.number}
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-              Total owned: <span style={{ color: 'var(--yellow)' }}>×{total}</span>
-            </div>
+      <div
+        className="modal"
+        style={{ maxWidth: 720, display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Left: card image */}
+        {(displayCard.imageLarge || displayCard.imageSmall) && (
+          <img
+            src={displayCard.imageLarge || displayCard.imageSmall}
+            alt={displayCard.name}
+            style={{ width: 200, borderRadius: 10, flexShrink: 0, border: '2px solid var(--card-border)' }}
+          />
+        )}
 
-            {visibleVariants.map(({ key, label }) => {
-              const qty = getVariantQty(card, key);
-              const price = prices[key];
-              // For prize stamped: if rawTcg has no price yet and fetchAllPrints is still running, show spinner
-              const priceLoading = key === 'prizestamped' && card.stampedPrice == null && loadingStamped;
-              return (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ flex: 1, fontSize: 12, fontWeight: qty > 0 ? 800 : 400, color: qty > 0 ? 'var(--text)' : 'var(--muted)' }}>{label}</span>
-                  <span style={{ fontSize: 10, color: price != null ? 'var(--green)' : 'var(--muted)', minWidth: 44, textAlign: 'right' }}>
-                    {priceLoading ? '…' : price != null ? `$${price.toFixed(2)}` : '—'}
-                  </span>
-                  <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, -1)}>−</button>
-                  <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13, minWidth: 20, textAlign: 'center', color: qty > 0 ? 'var(--green)' : 'var(--muted)' }}>×{qty}</span>
-                  <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, 1)}>+</button>
-                </div>
-              );
-            })}
+        {/* Right: card info + collection tracking */}
+        <div style={{ flex: 1, minWidth: 220 }}>
+
+          {/* Name + HP */}
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, letterSpacing: .5, color: 'var(--yellow)' }}>{displayCard.name}</span>
+            {displayCard.hp && <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 700 }}>HP {displayCard.hp}</span>}
           </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Done</button>
+
+          {/* Type line */}
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>
+            {displayCard.supertype}{displayCard.subtypes?.length ? ` — ${displayCard.subtypes.join(', ')}` : ''}
+          </div>
+
+          {/* Rules / card text (trainer effects, energy text, rule boxes) */}
+          {displayCard.rules?.length > 0 && displayCard.rules.map((rule, i) => {
+            const isRuleBox = /rule:/i.test(rule) || /you must/i.test(rule);
+            return (
+              <div key={i} style={{
+                marginBottom: 10, padding: '8px 10px',
+                background: isRuleBox ? 'rgba(245,166,35,.06)' : 'rgba(108,142,191,.06)',
+                border: `1px solid ${isRuleBox ? 'rgba(245,166,35,.2)' : 'rgba(108,142,191,.2)'}`,
+                borderRadius: 8,
+              }}>
+                {isRuleBox && (
+                  <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: .5 }}>
+                    Rule Box
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6 }}>{rule}</div>
+              </div>
+            );
+          })}
+
+          {/* Abilities */}
+          {displayCard.abilities?.map((ab, i) => (
+            <div key={i} style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(255,203,5,.06)', border: '1px solid rgba(255,203,5,.2)', borderRadius: 8 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3 }}>
+                {ab.type}: {ab.name}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{ab.text}</div>
+            </div>
+          ))}
+
+          {/* Attacks */}
+          {displayCard.attacksFull?.map((atk, i) => (
+            <div key={i} style={{ marginBottom: 10, padding: '8px 10px', background: 'var(--pill)', border: '1px solid var(--card-border)', borderRadius: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
+                <EnergyCost cost={atk.cost} />
+                <span style={{ fontWeight: 800, fontSize: 12 }}>{atk.name}</span>
+                {atk.damage && <span style={{ marginLeft: 'auto', fontWeight: 800, fontSize: 13, color: 'var(--text)' }}>{atk.damage}</span>}
+              </div>
+              {atk.text && <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>{atk.text}</div>}
+            </div>
+          ))}
+
+          {/* Weakness / Retreat */}
+          {(displayCard.weaknesses?.length > 0 || displayCard.retreatCost != null) && (
+            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)' }}>
+              {displayCard.weaknesses?.map((w, i) => (
+                <span key={i}>Weakness: <strong style={{ color: 'var(--text)' }}>{w.type} {w.value}</strong></span>
+              ))}
+              {displayCard.retreatCost != null && (
+                <span>Retreat: <strong style={{ color: 'var(--text)' }}>{displayCard.retreatCost === 0 ? 'Free' : `×${displayCard.retreatCost}`}</strong></span>
+              )}
+            </div>
+          )}
+
+          {/* Set info */}
+          <div style={{ fontSize: 10, color: 'var(--muted)', borderTop: '1px solid var(--card-border)', paddingTop: 8, marginTop: 4, marginBottom: 12 }}>
+            <div>{displayCard.setName}{displayCard.number ? ` · #${displayCard.number}` : ''}{displayCard.rarity ? ` · ${displayCard.rarity}` : ''}</div>
+            {displayCard.regulationMark && <div style={{ marginTop: 2 }}>Regulation Mark: {displayCard.regulationMark}</div>}
+            {displayCard.marketPrice != null && (
+              <div style={{ marginTop: 4 }}>
+                <span style={{ color: 'var(--green)', fontWeight: 700 }}>${displayCard.marketPrice.toFixed(2)}</span>
+                {displayCard.reverseHoloPrice != null && (
+                  <span style={{ color: 'var(--muted)', marginLeft: 10 }}>Rev. Holo: ${displayCard.reverseHoloPrice.toFixed(2)}</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Alt prints switcher */}
+          {(loadingAlts || altPrints.length > 0) && (
+            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--card-border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Other Prints{loadingAlts && ' …'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 10, padding: '3px 8px', fontWeight: displayCard.id === card.id ? 800 : 400 }}
+                  onClick={() => setActiveCard(baseCardRef.current)}
+                >
+                  {card.setName} #{card.number}
+                  {card.marketPrice != null ? ` · $${card.marketPrice.toFixed(2)}` : ''}
+                </button>
+                {altPrints.map(p => (
+                  <button
+                    key={p.id}
+                    className="btn btn-ghost btn-sm"
+                    style={{ fontSize: 10, padding: '3px 8px', fontWeight: p.id === displayCard.id ? 800 : 400 }}
+                    onClick={() => setActiveCard(p)}
+                  >
+                    {p.setName} #{p.number}
+                    {p.marketPrice != null ? ` · $${p.marketPrice.toFixed(2)}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Collection tracking (always based on the original `card`) */}
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Track in Collection
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
+            Total owned: <span style={{ color: 'var(--yellow)' }}>×{total}</span>
+            {collectionTotal > 0 && deckTotal > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400, marginLeft: 8 }}>
+                ({collectionTotal} collection · {deckTotal} in decks)
+              </span>
+            )}
+          </div>
+
+          {visibleVariants.map(({ key, label }) => {
+            const qty = getVariantQty(card, key);
+            const price = prices[key];
+            const priceLoading = key === 'prizestamped' && card.stampedPrice == null && loadingStamped;
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ flex: 1, fontSize: 12, fontWeight: qty > 0 ? 800 : 400, color: qty > 0 ? 'var(--text)' : 'var(--muted)' }}>{label}</span>
+                <span style={{ fontSize: 10, color: price != null ? 'var(--green)' : 'var(--muted)', minWidth: 44, textAlign: 'right' }}>
+                  {priceLoading ? '…' : price != null ? `$${price.toFixed(2)}` : '—'}
+                </span>
+                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, -1)}>−</button>
+                <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13, minWidth: 20, textAlign: 'center', color: qty > 0 ? 'var(--green)' : 'var(--muted)' }}>×{qty}</span>
+                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, 1)}>+</button>
+              </div>
+            );
+          })}
+
+          {/* Deck usage section */}
+          {deckUsages.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: '1px solid var(--card-border)', paddingTop: 12 }}>
+              <button
+                onClick={() => setDecksOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--fg)', cursor: 'pointer', padding: 0, marginBottom: decksOpen ? 8 : 0, width: '100%', textAlign: 'left' }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800 }}>In Decks</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>({deckUsages.length})</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)' }}>{decksOpen ? '▲' : '▼'}</span>
+              </button>
+              {decksOpen && deckUsages.map(({ deck, qty, owned }) => {
+                const allOwned = owned >= qty;
+                return (
+                  <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 6, marginBottom: 4, background: 'var(--darker)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{deck.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>needs ×{qty}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: allOwned ? 'var(--green)' : 'var(--orange)' }}>
+                        {owned}/{qty} owned
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="modal-actions" style={{ paddingLeft: 0, paddingRight: 0 }}>
+            <button className="btn btn-ghost" onClick={onClose}>Done</button>
+            <button className="btn btn-ghost" onClick={() => onCardInfo?.(displayCard)}>Card Info</button>
+            {(() => {
+              const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
+              const onWishlist = wishlist.some(w => cardKey(w) === ck);
+              return (
+                <button
+                  className={`btn btn-sm ${onWishlist ? 'btn-yellow' : 'btn-ghost'}`}
+                  onClick={() => onWishlist
+                    ? dispatch({ type: 'REMOVE_WISHLIST', ck })
+                    : dispatch({ type: 'ADD_WISHLIST', item: { name: card.name, setCode: card.setCode, num: card.number, qty: 1 } })
+                  }
+                >
+                  {onWishlist ? '★ Wishlisted' : '☆ Wishlist'}
+                </button>
+              );
+            })()}
+            {displayCard.tcgplayerUrl && (
+              <a href={displayCard.tcgplayerUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+                TCGPlayer ↗
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1231,10 +1899,32 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose }) {
 // ── Decks Tab ─────────────────────────────────────────────────────────────────
 function DecksTab({ state, getApiData, getDeckOwned, onOpenDeck }) {
   const [editDeck, setEditDeck] = useState(null);
+  const [formatFilter, setFormatFilter] = useState('All');
+
+  const visibleDecks = formatFilter === 'All'
+    ? state.decks
+    : state.decks.filter(d => d.format === formatFilter);
+
+  const DECK_FORMATS = ['All', 'Standard', 'Expanded', 'GLC', 'Era', 'Custom', 'Eternal'];
+  const fmtColor = { Standard: 'var(--std)', Expanded: 'var(--exp)', GLC: 'var(--glc)', Era: 'var(--era)', Custom: 'var(--cst)', Eternal: 'var(--eternal)' };
+  const isActive = formatFilter !== 'All';
+  const activeColor = fmtColor[formatFilter] || 'var(--muted)';
+
   return (
     <>
+      <div style={{ marginBottom: 14 }}>
+        <select value={formatFilter} onChange={e => setFormatFilter(e.target.value)} style={{
+          padding: '5px 12px', fontSize: 12, borderRadius: 8, cursor: 'pointer',
+          border: `2px solid ${isActive ? activeColor : 'var(--card-border)'}`,
+          background: isActive ? `color-mix(in srgb, ${activeColor} 12%, transparent)` : 'transparent',
+          color: isActive ? activeColor : 'var(--muted)',
+          fontFamily: "'Outfit',sans-serif", fontWeight: 700,
+        }}>
+          {DECK_FORMATS.map(f => <option key={f} value={f}>{f === 'All' ? 'All Formats' : f}</option>)}
+        </select>
+      </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 16 }}>
-        {state.decks.map(deck => (
+        {visibleDecks.map(deck => (
           <DeckCard key={deck.id} deck={deck} onClick={() => onOpenDeck(deck.id)} onEdit={() => setEditDeck(deck)} />
         ))}
       </div>
@@ -1244,7 +1934,33 @@ function DecksTab({ state, getApiData, getDeckOwned, onOpenDeck }) {
 }
 
 // ── Wishlist Tab ──────────────────────────────────────────────────────────────
-function WishlistTab({ state, getApiData, getDeckOwned, onCardClick }) {
+function WishlistTab({ state, dispatch, getApiData, getDeckOwned, onCardClick }) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchRef = useRef(null);
+
+  // Debounced search
+  useEffect(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) { setSearchResults([]); return; }
+    const t = setTimeout(async () => {
+      setSearchLoading(true);
+      const res = await searchByName(searchQuery.trim());
+      setSearchResults(res);
+      setSearchLoading(false);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  function addToWishlist(card) {
+    dispatch({ type: 'ADD_WISHLIST', item: { name: card.name, setCode: card.setCode || '', num: card.number || '', qty: 1 } });
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+  }
+
+  // Build deck-needed map
   const byDeck = {};
   for (const deck of state.decks) {
     for (const rc of deck.rawCards) {
@@ -1255,42 +1971,125 @@ function WishlistTab({ state, getApiData, getDeckOwned, onCardClick }) {
       byDeck[deck.name].items.push({ rc, need });
     }
   }
+  const deckEntries = Object.values(byDeck);
 
-  const entries = Object.values(byDeck);
-  if (!entries.length) {
-    return (
-      <div style={{ textAlign: 'center', padding: 56, color: 'var(--muted)' }}>
-        <p>You own everything across all your decks.</p>
-      </div>
-    );
-  }
+  const manualWishlist = state.wishlist || [];
+  const hasAnything = manualWishlist.length > 0 || deckEntries.length > 0;
 
   return (
     <div>
-      {entries.map(({ deck, items }) => (
-        <div key={deck.id}>
-          <div className="sec-div"><div className="lbl">{deck.name}</div><div className="line" /></div>
-          {items.map(({ rc, need }) => {
-            const api = getApiData(rc);
-            return (
-              <div key={cardKey(rc)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: '9px 12px', marginBottom: 6 }}>
-                {api?.imageSmall
-                  ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, own: getDeckOwned(deck, rc), api, decks: [deck.name] })} />
-                  : <div style={{ width: 30, height: 42, background: 'var(--pill)', borderRadius: 3 }} />
-                }
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 800, fontSize: 13 }}>{rc.name}</div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)' }}>{api?.setName || rc.setCode || ''}{rc.num ? ` · ${rc.num}` : ''}</div>
+      {/* ── My Wishlist ── */}
+      <div className="sec-div" style={{ marginBottom: 10 }}>
+        <div className="lbl">My Wishlist</div>
+        <div className="line" />
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ marginLeft: 8, whiteSpace: 'nowrap', fontSize: 12 }}
+          onClick={() => { setSearchOpen(v => !v); setSearchQuery(''); setSearchResults([]); }}
+        >
+          {searchOpen ? '✕ Close' : '+ Add Card'}
+        </button>
+      </div>
+
+      {searchOpen && (
+        <div style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <input
+            ref={searchRef}
+            autoFocus
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search card name…"
+            style={{ width: '100%', background: 'var(--dark)', border: '1px solid var(--card-border)', borderRadius: 7, padding: '7px 10px', color: 'var(--text)', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }}
+          />
+          {searchLoading && <div style={{ color: 'var(--muted)', fontSize: 12 }}>Searching…</div>}
+          {!searchLoading && searchResults.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(72px, 1fr))', gap: 6 }}>
+              {searchResults.map(card => (
+                <div key={card.id || `${card.setCode}-${card.number}`} style={{ cursor: 'pointer', borderRadius: 6, overflow: 'hidden', position: 'relative' }}
+                  onClick={() => addToWishlist(card)} title={`${card.name} (${card.setCode})`}>
+                  {card.imageSmall
+                    ? <img src={card.imageSmall} alt={card.name} style={{ width: '100%', display: 'block' }} />
+                    : <div style={{ width: '100%', aspectRatio: '2.5/3.5', background: 'var(--pill)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: 'var(--muted)', padding: 2, textAlign: 'center' }}>{card.name}</div>
+                  }
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {api?.marketPrice && <span style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>${(api.marketPrice * need).toFixed(2)}</span>}
-                  <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 11, fontWeight: 700, background: 'var(--red)', color: '#fff', padding: '2px 6px', borderRadius: 4 }}>Need ×{need}</span>
-                </div>
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
+          {!searchLoading && searchQuery.trim().length >= 2 && searchResults.length === 0 && (
+            <div style={{ color: 'var(--muted)', fontSize: 12 }}>No results.</div>
+          )}
         </div>
-      ))}
+      )}
+
+      {manualWishlist.length === 0 && (
+        <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 18, paddingLeft: 2 }}>No cards added yet.</div>
+      )}
+
+      {manualWishlist.map(item => {
+        const rc = { name: item.name, setCode: item.setCode || '', num: item.num || '' };
+        const api = getApiData(rc);
+        const ck = cardKey(item);
+        return (
+          <div key={ck} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: '9px 12px', marginBottom: 6 }}>
+            {api?.imageSmall
+              ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, own: 0, api, decks: [] })} />
+              : <div style={{ width: 30, height: 42, background: 'var(--pill)', borderRadius: 3 }} />
+            }
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 800, fontSize: 13 }}>{item.name}</div>
+              <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+                {api?.setName || item.setCode || ''}
+                {item.num ? ` · ${item.num}` : ''}
+                <span style={{ marginLeft: 6, color: 'var(--yellow)', fontWeight: 700 }}>Wishlist</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              {api?.marketPrice && <span style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>${(api.marketPrice * item.qty).toFixed(2)}</span>}
+              <button className="btn btn-ghost btn-xs" style={{ width: 24, height: 24, padding: 0, fontSize: 15 }} onClick={() => dispatch({ type: 'SET_WISHLIST_QTY', ck, qty: item.qty - 1 })}>−</button>
+              <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13, minWidth: 20, textAlign: 'center' }}>×{item.qty}</span>
+              <button className="btn btn-ghost btn-xs" style={{ width: 24, height: 24, padding: 0, fontSize: 15 }} onClick={() => dispatch({ type: 'SET_WISHLIST_QTY', ck, qty: item.qty + 1 })}>+</button>
+              <button className="btn btn-ghost btn-xs" style={{ width: 24, height: 24, padding: 0, fontSize: 13, color: 'var(--red)' }} onClick={() => dispatch({ type: 'REMOVE_WISHLIST', ck })}>✕</button>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* ── Deck Needs ── */}
+      {deckEntries.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <div className="sec-div"><div className="lbl">Needed for Decks</div><div className="line" /></div>
+          {deckEntries.map(({ deck, items }) => (
+            <div key={deck.id}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--yellow)', margin: '12px 0 6px', textTransform: 'uppercase', letterSpacing: .5 }}>{deck.name}</div>
+              {items.map(({ rc, need }) => {
+                const api = getApiData(rc);
+                return (
+                  <div key={cardKey(rc)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: '9px 12px', marginBottom: 6 }}>
+                    {api?.imageSmall
+                      ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, own: getDeckOwned(deck, rc), api, decks: [deck.name] })} />
+                      : <div style={{ width: 30, height: 42, background: 'var(--pill)', borderRadius: 3 }} />
+                    }
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13 }}>{rc.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--muted)' }}>{api?.setName || rc.setCode || ''}{rc.num ? ` · ${rc.num}` : ''}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {api?.marketPrice && <span style={{ fontSize: 11, color: 'var(--orange)', fontWeight: 700 }}>${(api.marketPrice * need).toFixed(2)}</span>}
+                      <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 11, fontWeight: 700, background: 'var(--red)', color: '#fff', padding: '2px 6px', borderRadius: 4 }}>Need ×{need}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasAnything && (
+        <div style={{ textAlign: 'center', padding: 56, color: 'var(--muted)' }}>
+          <p>You own everything across all your decks and have no wishlist items.</p>
+        </div>
+      )}
     </div>
   );
 }

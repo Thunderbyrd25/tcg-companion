@@ -8,6 +8,8 @@ export default function BuyList() {
   const { state, dispatch, getApiData, getDeckOwned } = useStore();
   const [importOpen, setImportOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [consolidated, setConsolidated] = useState(false);
+  const [expanded, setExpanded] = useState(new Set());
   const toast = useToast();
 
   const byDeck = useMemo(() => {
@@ -23,22 +25,56 @@ export default function BuyList() {
     return Object.values(map);
   }, [state, getDeckOwned]);
 
-  const totalItems = byDeck.reduce((s, d) => s + d.items.length, 0);
-  const totalCost = byDeck.reduce((s, { items }) =>
-    s + items.reduce((ss, { rc, need }) => {
-      const api = getApiData(rc);
-      return ss + (api?.marketPrice ? api.marketPrice * need : 0);
-    }, 0), 0
-  );
+  // Consolidated view: group by card name, then collect per-print breakdown
+  const byCard = useMemo(() => {
+    const map = {};
+    for (const { deck, items } of byDeck) {
+      for (const { rc, need } of items) {
+        const name = rc.name;
+        if (!map[name]) map[name] = { name, totalNeed: 0, prints: {} };
+        map[name].totalNeed += need;
+        const pk = cardKey(rc);
+        if (!map[name].prints[pk]) map[name].prints[pk] = { rc, need: 0, decks: [] };
+        map[name].prints[pk].need += need;
+        if (!map[name].prints[pk].decks.includes(deck.name))
+          map[name].prints[pk].decks.push(deck.name);
+      }
+    }
+    return Object.values(map)
+      .map(e => ({ ...e, prints: Object.values(e.prints) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [byDeck]);
+
+  const totalItems = consolidated
+    ? byCard.length
+    : byDeck.reduce((s, d) => s + d.items.length, 0);
+  const totalCost = consolidated
+    ? byCard.reduce((s, { prints }) =>
+        s + prints.reduce((ss, { rc, need }) => {
+          const api = getApiData(rc);
+          return ss + (api?.marketPrice ? api.marketPrice * need : 0);
+        }, 0), 0)
+    : byDeck.reduce((s, { items }) =>
+        s + items.reduce((ss, { rc, need }) => {
+          const api = getApiData(rc);
+          return ss + (api?.marketPrice ? api.marketPrice * need : 0);
+        }, 0), 0
+      );
 
   function buildText() {
     const lines = ['# TCG Companion Buy List', `# ${new Date().toLocaleDateString()}`, ''];
-    for (const { deck, items } of byDeck) {
-      lines.push(`# ${deck.name}`);
-      for (const { rc, need } of items) {
-        lines.push(`${need} ${rc.name}${rc.setCode ? ' ' + rc.setCode + ' ' + rc.num : ''}`);
+    if (consolidated) {
+      for (const { name, totalNeed } of byCard) {
+        lines.push(`${totalNeed} ${name}`);
       }
-      lines.push('');
+    } else {
+      for (const { deck, items } of byDeck) {
+        lines.push(`# ${deck.name}`);
+        for (const { rc, need } of items) {
+          lines.push(`${need} ${rc.name}${rc.setCode ? ' ' + rc.setCode + ' ' + rc.num : ''}`);
+        }
+        lines.push('');
+      }
     }
     return lines.join('\n');
   }
@@ -67,6 +103,11 @@ export default function BuyList() {
               ~${totalCost.toFixed(2)} total
             </span>
           )}
+          <button
+            className={`btn btn-sm ${consolidated ? 'btn-yellow' : 'btn-ghost'}`}
+            onClick={() => setConsolidated(v => !v)}
+            title="Merge the same card across multiple decks into one entry"
+          >Consolidate</button>
           <button className="btn btn-yellow btn-sm" onClick={copyList}>{copied ? 'Copied!' : 'Copy'}</button>
           <button className="btn btn-ghost btn-sm" onClick={downloadList}>Download</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setImportOpen(true)}>Import Buy List</button>
@@ -77,7 +118,75 @@ export default function BuyList() {
         <div style={{ textAlign: 'center', padding: 56, color: 'var(--muted)' }}>
           <p style={{ fontSize: 14 }}>You own everything across all your decks.</p>
         </div>
+      ) : consolidated ? (
+        // ── Consolidated view ──────────────────────────────────────────────────
+        byCard.map(({ name, totalNeed, prints }) => {
+          const firstApi = getApiData(prints[0].rc);
+          const isOpen = expanded.has(name);
+          const multiPrint = prints.length > 1;
+          const totalPrice = prints.reduce((s, { rc, need }) => {
+            const api = getApiData(rc);
+            return s + (api?.marketPrice ? api.marketPrice * need : 0);
+          }, 0);
+          const allDecks = [...new Set(prints.flatMap(p => p.decks))];
+          return (
+            <div key={name} style={{ marginBottom: 4 }}>
+              {/* Parent row */}
+              <div
+                onClick={multiPrint ? () => setExpanded(prev => { const s = new Set(prev); s.has(name) ? s.delete(name) : s.add(name); return s; }) : undefined}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 12px', borderRadius: isOpen ? '8px 8px 0 0' : 8, background: 'var(--darker)', gap: 12, cursor: multiPrint ? 'pointer' : 'default' }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {firstApi?.imageSmall && (
+                    <img src={firstApi.imageSmall} alt="" style={{ width: 32, height: 44, objectFit: 'cover', borderRadius: 3 }} />
+                  )}
+                  <div>
+                    <span style={{ fontWeight: 800 }}>{name}</span>
+                    {!multiPrint && prints[0].rc.setCode && (
+                      <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 8 }}>
+                        {firstApi?.setName || prints[0].rc.setCode} · {prints[0].rc.num}
+                      </span>
+                    )}
+                    {multiPrint && (
+                      <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 8 }}>{prints.length} prints</span>
+                    )}
+                    <div style={{ color: 'var(--muted)', fontSize: 10, marginTop: 2 }}>{allDecks.join(' · ')}</div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {totalPrice > 0 && <span style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 800 }}>${totalPrice.toFixed(2)}</span>}
+                  <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 11, fontWeight: 700, background: 'var(--red)', color: '#fff', padding: '2px 7px', borderRadius: 4 }}>Need ×{totalNeed}</span>
+                  {multiPrint && <span style={{ color: 'var(--muted)', fontSize: 12 }}>{isOpen ? '▲' : '▼'}</span>}
+                </div>
+              </div>
+              {/* Expanded prints */}
+              {multiPrint && isOpen && (
+                <div style={{ borderRadius: '0 0 8px 8px', overflow: 'hidden', border: '1px solid var(--card-border)', borderTop: 'none' }}>
+                  {prints.map(({ rc, need, decks }) => {
+                    const api = getApiData(rc);
+                    const price = api?.marketPrice;
+                    return (
+                      <div key={cardKey(rc)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 12px 7px 54px', background: 'var(--card-bg)', gap: 12, borderTop: '1px solid var(--card-border)' }}>
+                        <div>
+                          <span style={{ color: 'var(--fg)', fontSize: 13 }}>{api?.setName || rc.setCode}</span>
+                          {rc.num && <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>· {rc.num}</span>}
+                          {price && <span style={{ color: 'var(--muted)', fontSize: 11, marginLeft: 6 }}>${price.toFixed(2)} each</span>}
+                          <span style={{ color: 'var(--muted)', fontSize: 10, marginLeft: 8 }}>{decks.join(' · ')}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {price && <span style={{ fontSize: 12, color: 'var(--orange)', fontWeight: 800 }}>${(price * need).toFixed(2)}</span>}
+                          <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 11, fontWeight: 700, background: 'var(--red)', color: '#fff', padding: '2px 7px', borderRadius: 4 }}>×{need}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })
       ) : (
+        // ── Per-deck view ──────────────────────────────────────────────────────
         byDeck.map(({ deck, items }) => {
           const deckCost = items.reduce((s, { rc, need }) => {
             const api = getApiData(rc);

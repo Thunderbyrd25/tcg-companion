@@ -33,6 +33,7 @@ const INITIAL = {
   decks: [],         // [{id,name,format,eraLabel,notes,rawCards,raw,sectionMap,ownedMap,blingSel,isBuyList}]
   apiCache: {},      // cardKey -> apiData
   collection: {},    // cardKey -> qty (standalone collection)
+  wishlist: [],      // [{name,setCode,num,qty}] — manually added want list
 };
 
 function load() {
@@ -48,6 +49,7 @@ function save(state) {
     localStorage.setItem('tcg_v4', JSON.stringify({
       decks: state.decks,
       collection: state.collection,
+      wishlist: state.wishlist || [],
       // don't persist apiCache — it gets re-fetched
     }));
   } catch {}
@@ -65,8 +67,17 @@ function reducer(state, action) {
       return { ...state, decks };
     }
 
-    case 'DELETE_DECK':
-      return { ...state, decks: state.decks.filter(d => d.id !== action.id) };
+    case 'DELETE_DECK': {
+      const decks = state.decks.filter(d => d.id !== action.id);
+      if (!action.addToCollection) return { ...state, decks };
+      const collection = { ...state.collection };
+      for (const rc of (action.rawCards || [])) {
+        const ck = cardKey(rc);
+        const owned = sumOwnedArr(action.ownedMap?.[ck], rc.qty);
+        if (owned > 0) collection[ck] = (collection[ck] || 0) + owned;
+      }
+      return { ...state, decks, collection };
+    }
 
     case 'SET_OWNED': {
       const { deckId, ck, val } = action;
@@ -142,6 +153,25 @@ function reducer(state, action) {
 
     case 'SET_COLLECTION':
       return { ...state, collection: action.collection };
+
+    case 'ADD_WISHLIST': {
+      const { item } = action; // { name, setCode, num, qty? }
+      const ck = cardKey(item);
+      const existing = (state.wishlist || []).find(w => cardKey(w) === ck);
+      if (existing) {
+        return { ...state, wishlist: state.wishlist.map(w => cardKey(w) === ck ? { ...w, qty: (w.qty || 1) + (item.qty || 1) } : w) };
+      }
+      return { ...state, wishlist: [...(state.wishlist || []), { name: item.name, setCode: item.setCode || '', num: item.num || '', qty: item.qty || 1 }] };
+    }
+
+    case 'REMOVE_WISHLIST':
+      return { ...state, wishlist: (state.wishlist || []).filter(w => cardKey(w) !== action.ck) };
+
+    case 'SET_WISHLIST_QTY': {
+      const { ck, qty } = action;
+      if (qty <= 0) return { ...state, wishlist: (state.wishlist || []).filter(w => cardKey(w) !== ck) };
+      return { ...state, wishlist: (state.wishlist || []).map(w => cardKey(w) === ck ? { ...w, qty } : w) };
+    }
 
     case 'APPLY_COLLECTION': {
       // Apply collection owned counts to all decks

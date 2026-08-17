@@ -76,8 +76,8 @@ export const ALL_SETS = [
   {code:'BKT',name:'BREAKthrough',id:'xy8',era:'XY'},
   {code:'AOR',name:'Ancient Origins',id:'xy7',era:'XY'},
   {code:'ROS',name:'Roaring Skies',id:'xy6',era:'XY'},
-  {code:'PRC',name:'Primal Clash',id:'xy5',era:'XY'},
   {code:'DCR',name:'Double Crisis',id:'dc1',era:'XY'},
+  {code:'PRC',name:'Primal Clash',id:'xy5',era:'XY'},
   {code:'PHF',name:'Phantom Forces',id:'xy4',era:'XY'},
   {code:'FFI',name:'Furious Fists',id:'xy3',era:'XY'},
   {code:'FLF',name:'Flashfire',id:'xy2',era:'XY'},
@@ -106,6 +106,8 @@ export const ALL_SETS = [
   {code:'HS',name:'HeartGold & SoulSilver',id:'hgss1',era:'HGSS'},
   {code:'PR-HS',name:'HGSS Black Star Promos',id:'hsp',era:'HGSS'},
   // ── Diamond & Pearl / Platinum ───────────────────────────────────────────────
+  {code:'PR-DPP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
+  {code:'PR-DP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
   {code:'AR',name:'Arceus',id:'pl4',era:'DP'},
   {code:'SV',name:'Supreme Victors',id:'pl3',era:'DP'},
   {code:'RR',name:'Rising Rivals',id:'pl2',era:'DP'},
@@ -117,7 +119,6 @@ export const ALL_SETS = [
   {code:'SW',name:'Secret Wonders',id:'dp3',era:'DP'},
   {code:'MT',name:'Mysterious Treasures',id:'dp2',era:'DP'},
   {code:'DP',name:'Diamond & Pearl',id:'dp1',era:'DP'},
-  {code:'PR-DPP',name:'DP Black Star Promos',id:'dpp',era:'DP'},
   // ── EX ───────────────────────────────────────────────────────────────────────
   {code:'PK',name:'EX Power Keepers',id:'ex16',era:'EX'},
   {code:'DF',name:'EX Dragon Frontiers',id:'ex15',era:'EX'},
@@ -134,6 +135,11 @@ export const ALL_SETS = [
   {code:'MA',name:'EX Team Magma vs Aqua',id:'ex4',era:'EX'},
   {code:'DR',name:'EX Dragon',id:'ex3',era:'EX'},
   {code:'SS',name:'EX Sandstorm',id:'ex2',era:'EX'},
+  {code:'POP5',name:'POP Series 5',id:'pop5',era:'EX'},
+  {code:'POP4',name:'POP Series 4',id:'pop4',era:'EX'},
+  {code:'POP3',name:'POP Series 3',id:'pop3',era:'EX'},
+  {code:'POP2',name:'POP Series 2',id:'pop2',era:'EX'},
+  {code:'POP1',name:'POP Series 1',id:'pop1',era:'EX'},
   {code:'RS',name:'EX Ruby & Sapphire',id:'ex1',era:'EX'},
   {code:'PR-NP',name:'Nintendo Black Star Promos',id:'np',era:'EX'},
   // ── E-Card ───────────────────────────────────────────────────────────────────
@@ -141,6 +147,8 @@ export const ALL_SETS = [
   {code:'AQ',name:'Aquapolis',id:'ecard2',era:'ECard'},
   {code:'EXP',name:'Expedition Base Set',id:'ecard1',era:'ECard'},
   {code:'E1',name:'Expedition Base Set',id:'ecard1',era:'ECard'},
+  // LC placed here (May 2002) so era index ranges correctly span TR→LC through Neo/Gym sets
+  {code:'LC',name:'Legendary Collection',id:'base6',era:'Base'},
   // ── Neo ───────────────────────────────────────────────────────────────────────
   {code:'N4',name:'Neo Destiny',id:'neo4',era:'Neo'},
   {code:'N3',name:'Neo Revelation',id:'neo3',era:'Neo'},
@@ -153,7 +161,6 @@ export const ALL_SETS = [
   {code:'TR',name:'Team Rocket',id:'base5',era:'Base'},
   {code:'B2',name:'Base Set 2',id:'base4',era:'Base'},
   {code:'BS2',name:'Base Set 2',id:'base4',era:'Base'},
-  {code:'LC',name:'Legendary Collection',id:'base6',era:'Base'},
   {code:'FO',name:'Fossil',id:'base3',era:'Base'},
   {code:'JU',name:'Jungle',id:'base2',era:'Base'},
   {code:'BS',name:'Base Set',id:'base1',era:'Base'},
@@ -190,24 +197,25 @@ export const PTCGO_TO_SET_ID = {
   'EVO':'xy12','STS':'xy11','FCO':'xy10','GEN':'g1',
   'BKP':'xy9','BKT':'xy8','AOR':'xy7','ROS':'xy6',
   'PRC':'xy5','DCR':'dc1','PHF':'xy4','FFI':'xy3',
-  'FLF':'xy2','KSS':'xy0','XY':'xy1','PR-XY':'xyp',
+  'FLF':'xy2','KSS':'xy0','XY':'xy1','PR-XY':'xyp','XYP':'xyp',
   // Black & White
   'LTR':'bw11','PLB':'bw10','PLF':'bw9','PLS':'bw8',
   'BCR':'bw7','DRV':'dv1','DRX':'bw6','DEX':'bw5',
   'NXD':'bw4','NVI':'bw3','EPO':'bw2','BLW':'bw1',
-  'PR-BLW':'bwp',
+  'PR-BLW':'bwp','BWP':'bwp',
   // HGSS
   'CL':'col1','TM':'hgss4','UD':'hgss3','UL':'hgss2',
   'HS':'hgss1','PR-HS':'hsp',
   // DP / Platinum
   'AR':'pl4','SV':'pl3','RR':'pl2','PL':'pl1',
   'SF':'dp7','LA':'dp6','MD':'dp5','GE':'dp4',
-  'SW':'dp3','MT':'dp2','DP':'dp1','PR-DPP':'dpp',
+  'SW':'dp3','MT':'dp2','DP':'dp1','PR-DPP':'dpp','PR-DP':'dpp',
   // EX
   'PK':'ex16','DF':'ex15','CG':'ex14','HP':'ex13',
   'LM':'ex12','DS':'ex11','UF':'ex10','EM':'ex9',
   'DX':'ex8','TRR':'ex7','RG':'ex6','HL':'ex5',
   'MA':'ex4','DR':'ex3','SS':'ex2','RS':'ex1',
+  'POP5':'pop5','POP4':'pop4','POP3':'pop3','POP2':'pop2','POP1':'pop1',
   'PR-NP':'np',
   // E-Card
   'SK':'ecard3','AQ':'ecard2','EXP':'ecard1','E1':'ecard1',

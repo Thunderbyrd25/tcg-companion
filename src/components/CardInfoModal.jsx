@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchAllPrints, getBasicEnergyType } from '../utils/api';
+import { fetchAllPrints, fetchAllAppearances, lookupCard, getBasicEnergyType } from '../utils/api';
 
 const ENERGY_COLOR = {
   Fire: '#e8460a', Water: '#4a90d9', Grass: '#3a9a3a', Lightning: '#e8c200',
@@ -26,9 +26,12 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
   const [card, setCard] = useState(initialCard);
   const [altPrints, setAltPrints] = useState([]);
   const [loadingAlts, setLoadingAlts] = useState(false);
+  const [appearances, setAppearances] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [loadingAppCard, setLoadingAppCard] = useState(null); // id of appearance being loaded
 
   // Sync if parent swaps the card prop entirely
-  useEffect(() => { setCard(initialCard); }, [initialCard?.id]);
+  useEffect(() => { setCard(initialCard); setAppearances([]); }, [initialCard?.id]);
 
   useEffect(() => {
     if (!card) return;
@@ -43,10 +46,60 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
       attackNames: card.attacks,
       attacksFull: card.attacksFull,
     }).then(prints => {
-      setAltPrints(prints.filter(p => p.id !== card.id));
+      const normNum = n => String(n || '').replace(/^0+/, '') || '0';
+      const sameSetAs = (a, b) =>
+        (a.setId && b.setId && a.setId === b.setId) ||
+        (a.setCode && b.setCode && a.setCode === b.setCode) ||
+        (a.setName && b.setName && a.setName === b.setName);
+      const isSameSlot = p =>
+        p.id !== card.id &&
+        normNum(p.number) === normNum(card.number) &&
+        sameSetAs(p, card);
+
+      const scoreCard = c => (c.rules?.length || 0) + (c.abilities?.length || 0) +
+        (c.attacksFull?.length || 0) + (c.nationalPokedexNumbers?.length || 0) +
+        (c.marketPrice != null ? 1 : 0);
+
+      // Find same-slot or self in prints to patch missing fields onto card
+      const freshSelf = prints.find(p => p.id === card.id);
+      const sameSlot  = prints.find(isSameSlot);
+      const donor = (sameSlot && scoreCard(sameSlot) >= scoreCard(freshSelf || card))
+        ? sameSlot : (freshSelf || sameSlot);
+      if (donor) {
+        setCard(c => c?.id === card.id ? {
+          ...c,
+          rules:               donor.rules?.length               ? donor.rules               : (c.rules || []),
+          abilities:           donor.abilities?.length            ? donor.abilities            : (c.abilities || []),
+          attacksFull:         donor.attacksFull?.length          ? donor.attacksFull          : (c.attacksFull || []),
+          attacks:             donor.attacks?.length              ? donor.attacks              : (c.attacks || []),
+          nationalPokedexNumbers: donor.nationalPokedexNumbers?.length ? donor.nationalPokedexNumbers : (c.nationalPokedexNumbers || []),
+        } : c);
+      }
+
+      // Deduplicate altPrints: exclude self, same-slot, and duplicates within list
+      const altMap = new Map();
+      for (const p of prints) {
+        if (p.id === card.id || isSameSlot(p)) continue;
+        const key = `${normNum(p.number)}||${p.setId || p.setCode || p.setName}`;
+        const ex = altMap.get(key);
+        if (!ex || scoreCard(p) > scoreCard(ex)) altMap.set(key, p);
+      }
+      setAltPrints([...altMap.values()]);
       setLoadingAlts(false);
     });
   }, [card?.id]);
+
+  // Other Appearances: all cards featuring the same Pokédex number.
+  // Depends on both card.id (re-filter when alt print clicked) and
+  // nationalPokedexNumbers[0] (triggers fetch once the field is populated on stale cards).
+  useEffect(() => {
+    if (!card?.nationalPokedexNumbers?.length) { setAppearances([]); return; }
+    setLoadingApps(true);
+    fetchAllAppearances(card.nationalPokedexNumbers).then(results => {
+      setAppearances(results.filter(p => p.id !== card.id));
+      setLoadingApps(false);
+    });
+  }, [card?.id, card?.nationalPokedexNumbers?.[0]]);
 
   if (!card) return null;
   const img = card.imageLarge || card.imageSmall;
@@ -79,6 +132,26 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>
             {card.supertype}{card.subtypes?.length ? ` — ${card.subtypes.join(', ')}` : ''}
           </div>
+
+          {/* Rules / card text (trainer effects, energy text, rule boxes) */}
+          {card.rules?.length > 0 && card.rules.map((rule, i) => {
+            const isRuleBox = /rule:/i.test(rule) || /you must/i.test(rule);
+            return (
+              <div key={i} style={{
+                marginBottom: 10, padding: '8px 10px',
+                background: isRuleBox ? 'rgba(245,166,35,.06)' : 'rgba(108,142,191,.06)',
+                border: `1px solid ${isRuleBox ? 'rgba(245,166,35,.2)' : 'rgba(108,142,191,.2)'}`,
+                borderRadius: 8,
+              }}>
+                {isRuleBox && (
+                  <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: .5 }}>
+                    Rule Box
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6 }}>{rule}</div>
+              </div>
+            );
+          })}
 
           {/* Abilities */}
           {card.abilities?.map((ab, i) => (
@@ -128,7 +201,7 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
             )}
           </div>
 
-          {/* Alternate prints */}
+          {/* Other Prints — same card design, different set/art */}
           {(loadingAlts || altPrints.length > 0) && (
             <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--card-border)' }}>
               <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
@@ -144,6 +217,43 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
                   >
                     {p.setName} #{p.number}
                     {p.marketPrice != null ? ` · $${p.marketPrice.toFixed(2)}` : ''}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Other Appearances — every card featuring the same Pokédex number */}
+          {(loadingApps || appearances.length > 0) && (
+            <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--card-border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Other Appearances{loadingApps && ' …'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {appearances.map(p => (
+                  <button
+                    key={p.id}
+                    title={`${p.name}\n${p.setName} #${p.number}`}
+                    style={{
+                      background: 'none', border: '2px solid transparent', borderRadius: 6,
+                      padding: 0, cursor: loadingAppCard === p.id ? 'wait' : 'pointer',
+                      opacity: loadingAppCard && loadingAppCard !== p.id ? 0.5 : 1,
+                      transition: 'border-color .15s',
+                    }}
+                    onMouseEnter={e => { if (!loadingAppCard) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; }}
+                    onClick={async () => {
+                      if (loadingAppCard) return;
+                      setLoadingAppCard(p.id);
+                      const full = await lookupCard(p.setCode, p.number, p.name);
+                      setLoadingAppCard(null);
+                      if (full) setCard(full);
+                    }}
+                  >
+                    {p.imageSmall
+                      ? <img src={p.imageSmall} alt={p.name} style={{ width: 56, borderRadius: 4, display: 'block' }} loading="lazy" />
+                      : <div style={{ width: 56, height: 78, background: 'var(--pill)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: 'var(--muted)' }}>{p.name}</div>
+                    }
                   </button>
                 ))}
               </div>
