@@ -68,7 +68,15 @@ export function translateQuery(q) {
   return { where: conditions.length ? conditions.join(' AND ') : '1=1', params };
 }
 
-const ORDER_COLUMNS = { 'set.releaseDate': 'release_date', number: 'number', name: 'name' };
+// number is TEXT (promo cards can have letter prefixes like "XY126"), so a plain
+// ORDER BY number sorts lexicographically -- "245" comes before "4". Strip to
+// digits and cast so full-art/secret-rare reprints (usually numbered higher)
+// don't sort ahead of the base print.
+const ORDER_COLUMNS = {
+  'set.releaseDate': 'release_date',
+  number: "NULLIF(regexp_replace(number, '[^0-9]', '', 'g'), '')::int",
+  name: 'name',
+};
 
 export function translateOrderBy(orderBy) {
   if (!orderBy) return '';

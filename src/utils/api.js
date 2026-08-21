@@ -535,7 +535,7 @@ export async function fetchPrizePackPrice(cardName, cardNumber) {
 
 // Fetch a specific card image for splash display (format container art).
 // Results are persisted to localStorage so they survive page reloads.
-const SPLASH_LS_KEY = 'tcg_splash_v5';
+const SPLASH_LS_KEY = 'tcg_splash_v6';
 const splashMemCache = new Map();
 (function hydrateSplash() {
   try {
@@ -583,7 +583,13 @@ export async function fetchSplashImage({ name, setCode, number } = {}) {
       // Normalize both sides: strip non-alphanumeric to spaces, collapse whitespace
       const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
       const target = norm(name);
-      let card = d.data?.find(c => norm(c.name) === target)
+      // Prefer the lowest-numbered print among name matches (the set's first occurrence
+      // of the card) so a full-art/secret-rare reprint of the same name doesn't win —
+      // API sorts numbers as text, so re-sort numerically rather than trusting order.
+      const matches = (d.data || [])
+        .filter(c => norm(c.name) === target)
+        .sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+      let card = matches[0]
         ?? (number ? d.data?.find(c => c.number === String(number)) : null)
         ?? d.data?.[0];
       const img = card?.images?.large || card?.images?.small || null;
