@@ -8,10 +8,11 @@ import { ALL_SETS } from '../data/sets';
 const SET_ID_TO_CODE = Object.fromEntries(ALL_SETS.filter(s => s.id).map(s => [s.id, s.code]));
 import prizePackLookup from '../data/prizePackLookup.json';
 import { ERA_FORMATS, ERA_GROUPS } from '../data/eras';
-import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
+import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchAllAppearances, lookupCard, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
 import DeckCard from '../components/DeckCard';
 import DeckModal from '../components/DeckModal';
 import CardInfoModal from '../components/CardInfoModal';
+import ZoomableCardImage from '../components/ZoomableCardImage';
 
 const TABS = ['Cards', 'Sets', 'Decks', 'Wishlist'];
 const CARDS_PER_PAGE = 100;
@@ -947,7 +948,6 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
-  const [infoCard, setInfoCard] = useState(null);
   // Inside-a-set controls
   const [cardSort, setCardSort] = useState('number');      // 'number' | 'name' | 'price' | 'owned'
   const [cardFilter, setCardFilter] = useState('all');     // 'all' | 'collection' | 'decks' | 'both' | 'needed' | 'unowned'
@@ -1427,7 +1427,6 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           getVariantQty={getVariantQty}
           setVariantQty={setVariantQty}
           onClose={() => setSelectedCard(null)}
-          onCardInfo={card => setInfoCard(card)}
           dispatch={dispatch}
           wishlist={state.wishlist || []}
           deckUsages={(() => {
@@ -1442,7 +1441,6 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
           })()}
         />
       )}
-      {infoCard && <CardInfoModal card={infoCard} onClose={() => setInfoCard(null)} />}
     </div>
   );
 }
@@ -1521,11 +1519,14 @@ function EnergyCost({ cost }) {
 }
 
 // ── Browse Card Modal (card info + collection tracking + deck usage) ──────────
-function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardInfo, deckUsages = [], dispatch, wishlist = [] }) {
+function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsages = [], dispatch, wishlist = [] }) {
   const [activeCard, setActiveCard] = useState(card);
   const baseCardRef = useRef(card); // tracks the patched version of the original card
   const [altPrints, setAltPrints] = useState([]);
   const [loadingAlts, setLoadingAlts] = useState(false);
+  const [appearances, setAppearances] = useState([]);
+  const [loadingApps, setLoadingApps] = useState(false);
+  const [loadingAppCard, setLoadingAppCard] = useState(null); // id of appearance being loaded
   const [decksOpen, setDecksOpen] = useState(true);
   const [stampedCard, setStampedCard] = useState(null);
   const [loadingStamped, setLoadingStamped] = useState(true);
@@ -1533,6 +1534,20 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardIn
 
   // Sync activeCard when parent changes the card prop (shouldn't happen, but safe)
   useEffect(() => { setActiveCard(card); setAltPrints([]); }, [card?.id]);
+
+  // Other Appearances: every card featuring the same Pokédex number as whichever
+  // print is currently being viewed (displayCard), same as CardInfoModal.
+  const displayCardId = (activeCard || card)?.id;
+  const displayPokedex = (activeCard || card)?.nationalPokedexNumbers?.[0];
+  useEffect(() => {
+    const dc = activeCard || card;
+    if (!dc?.nationalPokedexNumbers?.length) { setAppearances([]); return; }
+    setLoadingApps(true);
+    fetchAllAppearances(dc.nationalPokedexNumbers).then(results => {
+      setAppearances(results.filter(p => p.id !== dc.id));
+      setLoadingApps(false);
+    });
+  }, [displayCardId, displayPokedex]);
 
   // Check Prize Pack lookup: same name + number exists as a Prize Pack Series card on TCGPlayer.
   const normName = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
@@ -1688,13 +1703,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardIn
         onClick={e => e.stopPropagation()}
       >
         {/* Left: card image */}
-        {(displayCard.imageLarge || displayCard.imageSmall) && (
-          <img
-            src={displayCard.imageLarge || displayCard.imageSmall}
-            alt={displayCard.name}
-            style={{ width: 200, borderRadius: 10, flexShrink: 0, border: '2px solid var(--card-border)' }}
-          />
-        )}
+        <ZoomableCardImage src={displayCard.imageLarge || displayCard.imageSmall} alt={displayCard.name} />
 
         {/* Right: card info + collection tracking */}
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -1808,6 +1817,43 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardIn
             </div>
           )}
 
+          {/* Other Appearances — every card featuring the same Pokédex number */}
+          {(loadingApps || appearances.length > 0) && (
+            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--card-border)' }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
+                Other Appearances{loadingApps && ' …'}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {appearances.map(p => (
+                  <button
+                    key={p.id}
+                    title={`${p.name}\n${p.setName} #${p.number}`}
+                    style={{
+                      background: 'none', border: '2px solid transparent', borderRadius: 6,
+                      padding: 0, cursor: loadingAppCard === p.id ? 'wait' : 'pointer',
+                      opacity: loadingAppCard && loadingAppCard !== p.id ? 0.5 : 1,
+                      transition: 'border-color .15s',
+                    }}
+                    onMouseEnter={e => { if (!loadingAppCard) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; }}
+                    onClick={async () => {
+                      if (loadingAppCard) return;
+                      setLoadingAppCard(p.id);
+                      const full = await lookupCard(p.setCode, p.number, p.name);
+                      setLoadingAppCard(null);
+                      if (full) setActiveCard(full);
+                    }}
+                  >
+                    {p.imageSmall
+                      ? <img src={p.imageSmall} alt={p.name} style={{ width: 56, borderRadius: 4, display: 'block' }} loading="lazy" />
+                      : <div style={{ width: 56, height: 78, background: 'var(--pill)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: 'var(--muted)' }}>{p.name}</div>
+                    }
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Collection tracking (always based on the original `card`) */}
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
             Track in Collection
@@ -1868,7 +1914,6 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, onCardIn
 
           <div className="modal-actions" style={{ paddingLeft: 0, paddingRight: 0 }}>
             <button className="btn btn-ghost" onClick={onClose}>Done</button>
-            <button className="btn btn-ghost" onClick={() => onCardInfo?.(displayCard)}>Card Info</button>
             {(() => {
               const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
               const onWishlist = wishlist.some(w => cardKey(w) === ck);

@@ -75,6 +75,7 @@ export function normalizeCard(card) {
     attacks: card.attacks || [],
     abilities: card.abilities || [],
     weaknesses: card.weaknesses || [],
+    resistances: card.resistances || [],
     retreatCost: card.retreat_cost || [],
     rules: card.rules || [],
     nationalPokedexNumbers: card.national_pokedex_numbers || [],

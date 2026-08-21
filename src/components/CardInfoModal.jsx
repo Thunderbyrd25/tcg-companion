@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchAllPrints, fetchAllAppearances, lookupCard, getBasicEnergyType } from '../utils/api';
+import ZoomableCardImage from './ZoomableCardImage';
 
 const ENERGY_COLOR = {
   Fire: '#e8460a', Water: '#4a90d9', Grass: '#3a9a3a', Lightning: '#e8c200',
@@ -7,17 +8,21 @@ const ENERGY_COLOR = {
   Dragon: '#7b68ee', Fairy: '#e91e8c', Colorless: '#aaa',
 };
 
+function TypeIcon({ type }) {
+  return (
+    <span style={{
+      display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
+      background: ENERGY_COLOR[type] || '#aaa', border: '1px solid rgba(255,255,255,.2)',
+      fontSize: 7, color: '#fff', textAlign: 'center', lineHeight: '14px', fontWeight: 800,
+    }} title={type}>{type[0]}</span>
+  );
+}
+
 function EnergyCost({ cost }) {
   if (!cost?.length) return null;
   return (
     <span style={{ display: 'inline-flex', gap: 2, verticalAlign: 'middle', marginRight: 4 }}>
-      {cost.map((type, i) => (
-        <span key={i} style={{
-          display: 'inline-block', width: 14, height: 14, borderRadius: '50%',
-          background: ENERGY_COLOR[type] || '#aaa', border: '1px solid rgba(255,255,255,.2)',
-          fontSize: 7, color: '#fff', textAlign: 'center', lineHeight: '14px', fontWeight: 800,
-        }} title={type}>{type[0]}</span>
-      ))}
+      {cost.map((type, i) => <TypeIcon key={i} type={type} />)}
     </span>
   );
 }
@@ -112,13 +117,7 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
         onClick={e => e.stopPropagation()}
       >
         {/* Image */}
-        {img && (
-          <img
-            src={img}
-            alt={card.name}
-            style={{ width: 200, borderRadius: 10, flexShrink: 0, border: '2px solid var(--card-border)' }}
-          />
-        )}
+        <ZoomableCardImage src={img} alt={card.name} />
 
         {/* Info */}
         <div style={{ flex: 1, minWidth: 220 }}>
@@ -175,11 +174,18 @@ export default function CardInfoModal({ card: initialCard, onClose }) {
             </div>
           ))}
 
-          {/* Weakness / Retreat */}
-          {(card.weaknesses?.length > 0 || card.retreatCost != null) && (
-            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)' }}>
+          {/* Weakness / Resistance / Retreat */}
+          {(card.weaknesses?.length > 0 || card.resistances?.length > 0 || card.retreatCost != null) && (
+            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
               {card.weaknesses?.map((w, i) => (
-                <span key={i}>Weakness: <strong style={{ color: 'var(--text)' }}>{w.type} {w.value}</strong></span>
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Weakness: <TypeIcon type={w.type} /> <strong style={{ color: 'var(--text)' }}>{w.value}</strong>
+                </span>
+              ))}
+              {card.resistances?.map((r, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Resistance: <TypeIcon type={r.type} /> <strong style={{ color: 'var(--text)' }}>{r.value}</strong>
+                </span>
               ))}
               {card.retreatCost != null && (
                 <span>Retreat: <strong style={{ color: 'var(--text)' }}>{card.retreatCost === 0 ? 'Free' : `×${card.retreatCost}`}</strong></span>

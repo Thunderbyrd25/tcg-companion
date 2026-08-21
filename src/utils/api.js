@@ -139,6 +139,7 @@ export function parseCard(c) {
     attacksFull: c.attacks || [],
     abilities: c.abilities || [],
     weaknesses: c.weaknesses || [],
+    resistances: c.resistances || [],
     retreatCost: c.retreatCost?.length ?? null,
     rules: c.rules || [],
     nationalPokedexNumbers: c.nationalPokedexNumbers || [],
@@ -728,7 +729,7 @@ async function fetchTCGDexSetById(tcgdexId, setCode, ourSetId) {
       imageLarge: c.image ? `${c.image}/high.webp` : CARD_IMAGE_PLACEHOLDER,
       legalities: {}, regulationMark: '', marketPrice: null,
       reverseHoloPrice: null, stampedPrice: null, rawTcg: null,
-      types: [], hp: '', attacks: [], attacksFull: [], abilities: [], weaknesses: [], retreatCost: null,
+      types: [], hp: '', attacks: [], attacksFull: [], abilities: [], weaknesses: [], resistances: [], retreatCost: null,
     }));
     cards.sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
     tcgdexSetCache.set(tcgdexId, cards);
@@ -775,6 +776,7 @@ function parseTCGDexCard(c, setCode, ourSetId) {
     attacksFull:     (c.attacks || []).map(a => ({ name: a.name, damage: a.damage || '', cost: a.cost || [], effect: a.effect || '' })),
     abilities:       (c.abilities || []).map(a => ({ name: a.name, effect: a.effect || '' })),
     weaknesses:      c.weaknesses || [],
+    resistances:     c.resistances || [],
     retreatCost:     c.retreat ?? null,
     rules:           c.effect ? [c.effect] : [],
   };
@@ -868,7 +870,7 @@ async function searchCardsTCGDex(query, setId, page = 1, ptcgoCode = null) {
           imageLarge: c.image ? `${c.image}/high.webp` : '',
           legalities: {}, regulationMark: '', marketPrice: null,
           reverseHoloPrice: null, stampedPrice: null, rawTcg: null,
-          types: [], hp: '', attacks: [], attacksFull: [], abilities: [], weaknesses: [], retreatCost: null,
+          types: [], hp: '', attacks: [], attacksFull: [], abilities: [], weaknesses: [], resistances: [], retreatCost: null,
         }));
         return { cards, totalCount: cards.length };
       }

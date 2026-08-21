@@ -61,6 +61,7 @@ export default function DeckBuilder({ onBack }) {
   const [hasMore, setHasMore] = useState(false);
   const searchTimer = useRef(null);
   const [browseMode, setBrowseMode] = useState('collection'); // 'collection' | 'sets'
+  const [showUnowned, setShowUnowned] = useState(false);
 
   useEffect(() => { fetchSetsMetadata().then(setSetsMeta); }, []);
 
@@ -534,13 +535,20 @@ export default function DeckBuilder({ onBack }) {
           {/* Results grid */}
           {(isInSet || isSearching) && (
             <>
-              {isSearching && (
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
-                  {loading ? 'Searching…' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
-                </div>
-              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                {isSearching ? (
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                    {loading ? 'Searching…' : `${results.length} result${results.length !== 1 ? 's' : ''}`}
+                  </div>
+                ) : <div />}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                  <input type="checkbox" checked={showUnowned} onChange={e => setShowUnowned(e.target.checked)}
+                    style={{ width: 14, height: 14, accentColor: 'var(--yellow)', cursor: 'pointer' }} />
+                  Show unowned
+                </label>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
-                {results.map(card => (
+                {results.filter(card => showUnowned || getOwned(card) > 0).map(card => (
                   <ResultCard key={card.id} card={card} owned={getOwned(card)} legal={isCardLegal(card)} banned={isCardBanned(card)} onAdd={() => addCard(card)} setsMeta={setsMeta} />
                 ))}
               </div>
