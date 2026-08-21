@@ -6,9 +6,15 @@ import { PTCGO_TO_SET_ID, ALL_SETS } from '../data/sets';
 // are NOT available from TCGDex, so Standard legality checking will be degraded.
 // Flip back to false to revert with zero other changes needed.
 export const USE_TCGDEX = false;
+
+// Rollback flag: flip to true to bypass our Scrydex-backed backend and hit
+// pokemontcg.io directly again (restores the old X-Api-Key header path below).
+// Keep this around through the rollout window; remove once the new backend's
+// been the default in production for a while with no issues.
+export const USE_LEGACY_PTCGIO = false;
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TCG_API = 'https://api.pokemontcg.io/v2/cards';
+const TCG_API = USE_LEGACY_PTCGIO ? 'https://api.pokemontcg.io/v2/cards' : '/api/cards';
 export const CARD_IMAGE_PLACEHOLDER = '/card-placeholder.svg';
 
 // Reverse map: TCG API set ID (e.g. 'sv4') → PTCGO code (e.g. 'PAR')
@@ -93,7 +99,7 @@ export function setApiKey(key) {
 export function getApiKey() { return apiKey; }
 
 function headers() {
-  return apiKey ? { 'X-Api-Key': apiKey } : {};
+  return USE_LEGACY_PTCGIO && apiKey ? { 'X-Api-Key': apiKey } : {};
 }
 
 function cacheKey(setCode, num) {
