@@ -698,11 +698,12 @@ const TCGDEX_API = 'https://api.tcgdex.net/v2/en';
 // Mega Evolution sets (me1-me3, mep) used to live here because pokemontcg.io
 // didn't carry them — our Scrydex-backed backend now has complete, correct
 // data (including images) for all of them, so they no longer need the TCGDex
-// detour. Left empty rather than removed, as a fallback for any future set
-// our backend hasn't backfilled yet.
+// detour. 'mee' (Mega Evolution Energy) stays: it's a real 8-card product
+// Scrydex doesn't index at all (confirmed against their /expansions search),
+// but TCGDex has it in full.
 const TCGDEX_ID_MAP = {};
 const TCGDEX_ID_MAP_REVERSE = Object.fromEntries(Object.entries(TCGDEX_ID_MAP).map(([k,v])=>[v,k]));
-export const TCGDEX_SET_TOTALS = {};
+export const TCGDEX_SET_TOTALS = { 'mee': 8 };
 const tcgdexSetCache = new Map();
 
 // Internal helper — fetches a TCGDex set by TCGDex ID and returns cards in our format
@@ -783,8 +784,11 @@ async function lookupCardTCGDex(setCode, num, cardName) {
     const tcgdexId = TCGDEX_ID_MAP[ourSetId] || ourSetId;
     if (!tcgdexId) { cache.set(key, null); persistCache(); return null; }
 
-    // Strip letter prefix from promo numbers (XY126→126, BW100→100)
-    const numVariants = [...new Set([num, num.replace(/^[A-Za-z]+/, ''), num.replace(/^[A-Za-z]+/, '').replace(/^0+/, '') || '0'])].filter(Boolean);
+    // Strip letter prefix from promo numbers (XY126→126, BW100→100).
+    // Also try zero-padded 3-digit form — TCGDex numbers some sets (e.g. mee-007)
+    // that way even when the plain digit is what decks/exports use.
+    const stripped = num.replace(/^[A-Za-z]+/, '');
+    const numVariants = [...new Set([num, stripped, stripped.replace(/^0+/, '') || '0', stripped.padStart(3, '0')])].filter(Boolean);
 
     for (const n of numVariants) {
       try {
