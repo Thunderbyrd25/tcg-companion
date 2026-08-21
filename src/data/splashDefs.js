@@ -11,8 +11,8 @@ export const SPLASH_DEFS = {
     { name: 'Arceus LV.X', setCode: 'AR', number: '95' },
   ],
   standard: [
-    { name: 'Mega Zygarde ex', setCode: 'POR'  },
-    { name: 'Meowth ex', setCode: 'POR'  },
+    { name: 'Mega Darkrai ex', setCode: 'PBL' },
+    { name: 'Raging Bolt ex', setCode: 'TEF' },
   ],
   expanded: [
     { name: 'Double Dragon Energy', setCode: 'ROS' },
@@ -29,6 +29,14 @@ export const SPLASH_DEFS = {
   // ── Temporal Forces era ───────────────────────────────────────────────────
   'era-TEF-POR': [
     { name: 'Mega Zygarde ex', setCoode: 'POR' },
+    { name: 'Raging Bolt ex', setCode: 'TEF' },
+  ],
+  'era-TEF-CRI': [
+    { name: 'Mega Greninja ex', setCode: 'CRI' },
+    { name: 'Raging Bolt ex', setCode: 'TEF' },
+  ],
+  'era-TEF-PBL': [
+    { name: 'Mega Darkrai ex', setCode: 'PBL' },
     { name: 'Raging Bolt ex', setCode: 'TEF' },
   ],
 

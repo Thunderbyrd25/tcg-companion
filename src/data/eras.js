@@ -6,6 +6,8 @@ export const ERA_FORMATS = [
 
   // ── Temporal Forces (Standard) ───────────────────────────────────────────
   { group: 'Temporal Forces', label: 'Temporal Forces – Perfect Order',                           code: 'TEF-POR' },
+  { group: 'Temporal Forces', label: 'Temporal Forces – Chaos Rising',                            code: 'TEF-CRI' },
+  { group: 'Temporal Forces', label: 'Temporal Forces – Pitch Black',                             code: 'TEF-PBL' },
 
   // ── Scarlet & Violet ─────────────────────────────────────────────────────
   { group: 'Scarlet & Violet', label: 'Scarlet & Violet – Ascended Heroes',                       code: 'SVI-ASC' },
