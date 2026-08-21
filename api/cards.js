@@ -8,13 +8,12 @@ export default async function handler(req, res) {
     const order = translateOrderBy(orderBy);
     const { limit, offset, pageSize: ps, page: pg } = paginate(pageSize, page);
 
-    const countRows = await sql.query(`SELECT COUNT(*) FROM cards WHERE ${where}`, params);
-    const totalCount = parseInt(countRows[0].count, 10);
-
+    // COUNT(*) OVER() rides along with the data query so this is a single round-trip
+    // to the DB instead of two -- meaningful latency win given Neon's per-query overhead.
     const limitParam = params.length + 1;
     const offsetParam = params.length + 2;
     const dataRows = await sql.query(
-      `SELECT data FROM cards WHERE ${where} ${order} LIMIT $${limitParam} OFFSET $${offsetParam}`,
+      `SELECT data, COUNT(*) OVER() AS total_count FROM cards WHERE ${where} ${order} LIMIT $${limitParam} OFFSET $${offsetParam}`,
       [...params, limit, offset]
     );
 
@@ -23,7 +22,7 @@ export default async function handler(req, res) {
       page: pg,
       pageSize: ps,
       count: dataRows.length,
-      totalCount,
+      totalCount: dataRows.length ? parseInt(dataRows[0].total_count, 10) : 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
