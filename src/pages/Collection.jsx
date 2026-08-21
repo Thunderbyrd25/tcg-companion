@@ -11,8 +11,8 @@ import { ERA_FORMATS, ERA_GROUPS } from '../data/eras';
 import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchAllAppearances, lookupCard, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
 import DeckCard from '../components/DeckCard';
 import DeckModal from '../components/DeckModal';
-import CardInfoModal from '../components/CardInfoModal';
 import ZoomableCardImage from '../components/ZoomableCardImage';
+import CardDetailContent from '../components/CardDetailContent';
 
 const TABS = ['Cards', 'Sets', 'Decks', 'Wishlist'];
 const CARDS_PER_PAGE = 100;
@@ -139,6 +139,9 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
   const { rc, own, api } = entry;
   const ck = cardKey(rc);
   const standalone = collQty(state.collection[ck]);
+  const [activeCard, setActiveCard] = useState(api);
+  useEffect(() => { setActiveCard(api); }, [api?.id]);
+  const displayCard = activeCard || api;
 
   const deckBreakdown = useMemo(() => {
     return state.decks
@@ -163,62 +166,49 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
     }
   }
 
-  const [showCardInfo, setShowCardInfo] = useState(false);
-
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-          {api?.imageSmall && (
-            <img
-              src={api.imageLarge || api.imageSmall}
-              alt={rc.name}
-              style={{ width: 120, borderRadius: 8, flexShrink: 0, cursor: 'pointer' }}
-              onClick={() => setShowCardInfo(true)}
-              title="Click for full card info"
-            />
-          )}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ marginTop: 0, marginBottom: 4 }}>{rc.name}</h3>
-            {api?.setName && <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>{api.setName} · #{api.number || rc.num}</div>}
+      <div className="modal" style={{ maxWidth: 720, display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
+        <ZoomableCardImage src={displayCard?.imageLarge || displayCard?.imageSmall} alt={rc.name} />
 
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-              Total owned: <span style={{ color: 'var(--yellow)' }}>×{own}</span>
+        {displayCard ? <CardDetailContent card={displayCard} onCardChange={setActiveCard} /> : <div style={{ flex: 1, minWidth: 220 }}><h3 style={{ marginTop: 0 }}>{rc.name}</h3></div>}
+
+        <div style={{ width: '100%', paddingTop: 10, borderTop: '1px solid var(--card-border)' }}>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
+            Total owned: <span style={{ color: 'var(--yellow)' }}>×{own}</span>
+          </div>
+
+          {deckBreakdown.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>In Decks</div>
+              {deckBreakdown.map(({ deck, owned, total }) => (
+                <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid var(--card-border)', fontSize: 12 }}>
+                  <span style={{ fontWeight: 700 }}>{deck.name}</span>
+                  <span>
+                    <span style={{ color: owned >= total ? 'var(--green)' : owned > 0 ? 'var(--orange)' : 'var(--muted)' }}>{owned}</span>
+                    <span style={{ color: 'var(--muted)' }}> / {total} in deck</span>
+                  </span>
+                </div>
+              ))}
             </div>
+          )}
 
-            {deckBreakdown.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>In Decks</div>
-                {deckBreakdown.map(({ deck, owned, total }) => (
-                  <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid var(--card-border)', fontSize: 12 }}>
-                    <span style={{ fontWeight: 700 }}>{deck.name}</span>
-                    <span>
-                      <span style={{ color: owned >= total ? 'var(--green)' : owned > 0 ? 'var(--orange)' : 'var(--muted)' }}>{owned}</span>
-                      <span style={{ color: 'var(--muted)' }}> / {total} in deck</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Standalone (not in any deck)</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone - 1)}>−</button>
-                <input
-                  type="number" min={0} value={standalone}
-                  onChange={e => setStandalone(e.target.value)}
-                  style={{ width: 50, textAlign: 'center', padding: '4px', fontSize: 13, fontWeight: 800 }}
-                />
-                <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone + 1)}>+</button>
-              </div>
+          <div style={{ marginBottom: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Standalone (not in any deck)</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone - 1)}>−</button>
+              <input
+                type="number" min={0} value={standalone}
+                onChange={e => setStandalone(e.target.value)}
+                style={{ width: 50, textAlign: 'center', padding: '4px', fontSize: 13, fontWeight: 800 }}
+              />
+              <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone + 1)}>+</button>
             </div>
           </div>
         </div>
 
-        <div className="modal-actions">
+        <div className="modal-actions" style={{ width: '100%' }}>
           <button className="btn btn-ghost" onClick={onClose}>Close</button>
-          {api && <button className="btn btn-ghost" onClick={() => setShowCardInfo(true)}>Card Info</button>}
           {(() => {
             const onWishlist = (state.wishlist || []).some(w => cardKey(w) === ck);
             return (
@@ -235,8 +225,6 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
           })()}
         </div>
       </div>
-
-      {showCardInfo && api && <CardInfoModal card={api} onClose={() => setShowCardInfo(false)} />}
     </div>
   );
 }
@@ -260,9 +248,6 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
   const [page, setPage] = useState(1);
   const [loadingSet, setLoadingSet] = useState(false);
   const [loadedSets, setLoadedSets] = useState(0);
-  const [viewMode, setViewMode] = useState('collector'); // 'collector' | 'player'
-  const [expandedCards, setExpandedCards] = useState(new Set()); // card names expanded in player view
-  const [playerModalGroup, setPlayerModalGroup] = useState(null); // group opened in player modal
   const fetchingRef = useRef(false);
   const fetchedSetsRef = useRef(new Set());
   const reprintChecked = useRef(new Set());
@@ -533,30 +518,6 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
     return (parseInt(a.rc.num) || 0) - (parseInt(b.rc.num) || 0);
   }), [filtered, sort]);
 
-  // Player view: group by card name, aggregate quantities
-  const playerGroups = useMemo(() => {
-    if (viewMode !== 'player') return [];
-    const groups = new Map();
-    for (const entry of sorted) {
-      const name = entry.rc.name;
-      if (!groups.has(name)) groups.set(name, []);
-      groups.get(name).push(entry);
-    }
-    return [...groups.values()].map(prints => {
-      const totalOwn = prints.reduce((s, p) => s + p.own, 0);
-      // Display: print with most copies owned (fall back to first in sort order)
-      const displayEntry = prints.reduce((best, p) => p.own > best.own ? p : best, prints[0]);
-      return { name: prints[0].rc.name, displayEntry, prints, totalOwn };
-    });
-  }, [sorted, viewMode]);
-
-  function toggleExpand(name) {
-    setExpandedCards(prev => {
-      const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
-      return next;
-    });
-  }
 
   return (
     <>
@@ -573,20 +534,6 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
         ))}
         <button className={`chip ${typeFilter === 'in-use' ? 'on' : ''}`} onClick={() => setTypeFilter(t => t === 'in-use' ? 'all' : 'in-use')}>In Deck</button>
         <button className={`chip ${typeFilter === 'not-in-use' ? 'on' : ''}`} onClick={() => setTypeFilter(t => t === 'not-in-use' ? 'all' : 'not-in-use')}>Not in Deck</button>
-
-        {/* View mode toggle */}
-        <div style={{ display: 'flex', background: 'var(--pill)', borderRadius: 8, border: '1px solid var(--card-border)', overflow: 'hidden', flexShrink: 0 }}>
-          {['collector', 'player'].map(mode => (
-            <button key={mode} onClick={() => setViewMode(mode)} style={{
-              padding: '5px 12px', fontSize: 11, fontWeight: 700, border: 'none', cursor: 'pointer', transition: 'all .15s',
-              background: viewMode === mode ? 'var(--yellow)' : 'transparent',
-              color: viewMode === mode ? '#000' : 'var(--muted)',
-              fontFamily: "'Outfit',sans-serif",
-            }}>
-              {mode === 'collector' ? 'Collector' : 'Player'}
-            </button>
-          ))}
-        </div>
 
         {/* Dropdowns */}
         <select value={sort} onChange={e => setSort(e.target.value)} style={{ padding: '7px 10px', fontSize: 12 }}>
@@ -656,7 +603,7 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
       })()}
 
       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-        {viewMode === 'player' ? `${playerGroups.length} card${playerGroups.length !== 1 ? 's' : ''}` : `${sorted.length} print${sorted.length !== 1 ? 's' : ''}`}
+        {sorted.length} print{sorted.length !== 1 ? 's' : ''}
         {loadingSet && (
           <span style={{ color: 'var(--yellow)' }}>
             {setFilter ? 'Loading set…' : `Loading sets… ${loadedSets}/${ALL_SETS.length}`}
@@ -664,12 +611,11 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
         )}
       </div>
 
-      {(viewMode === 'player' ? playerGroups.length === 0 : sorted.length === 0) ? (
+      {sorted.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 56, color: 'var(--muted)' }}>
           <p>No cards match the current filters.</p>
         </div>
-      ) : viewMode === 'collector' ? (
-        /* ── Collector view: one tile per print ── */
+      ) : (
         <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 12 }}>
           {sorted.slice((page - 1) * CARDS_PER_PAGE, page * CARDS_PER_PAGE).map(({ rc, own, api, decks, neededDecks }) => {
@@ -727,211 +673,8 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
           </div>
         )}
         </>
-      ) : (
-        /* ── Player view: one tile per card name, grouped ── */
-        <>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))', gap: 12 }}>
-          {playerGroups.slice((page - 1) * CARDS_PER_PAGE, page * CARDS_PER_PAGE).map(({ name, displayEntry, prints, totalOwn }) => {
-            const { rc, api } = displayEntry;
-            const allDecks = [...new Set(prints.flatMap(p => p.decks))];
-            const allNeededDecks = [...new Set(prints.flatMap(p => p.neededDecks || []))];
-            const onWishlist = (state.wishlist || []).some(w => prints.some(p => cardKey(w) === cardKey(p.rc)));
-            const isExpanded = expandedCards.has(name);
-            const multiPrint = prints.length > 1;
-            const isNeeded = allNeededDecks.length > 0;
-            const coveredDecks = allDecks.filter(d => !allNeededDecks.includes(d));
-            // Sum owned-in-deck copies across all prints of this card
-            const inDeck = prints.reduce((s, p) => s + (deckUsage.inDecks[cardKey(p.rc)] || 0), 0);
-            const spare = Math.max(0, totalOwn - inDeck);
-            return (
-              <div key={name} style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, overflow: 'hidden', transition: 'all .2s', position: 'relative', cursor: 'pointer', opacity: totalOwn <= 0 ? .45 : 1 }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--blue)'; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-                onClick={() => setPlayerModalGroup({ name, displayEntry, prints, totalOwn })}
-              >
-                {api?.imageSmall
-                  ? <img src={api.imageSmall} alt={name} style={{ width: '100%', display: 'block' }} loading="lazy" />
-                  : <div style={{ height: 90, background: 'var(--pill)' }} />
-                }
-                {totalOwn > 0 && (
-                  <div style={{ position: 'absolute', top: 6, right: 6, background: 'rgba(0,0,0,.82)', color: 'var(--yellow)', fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 11, padding: '2px 6px', borderRadius: 4 }}>×{totalOwn}</div>
-                )}
-                {(allDecks.length > 0 || onWishlist) && (
-                  <div style={{ position: 'absolute', top: 6, left: 6, background: isNeeded ? 'rgba(249,115,22,.9)' : onWishlist && !allDecks.length ? 'rgba(255,203,5,.9)' : 'rgba(74,222,128,.9)', color: '#000', fontSize: 10, fontWeight: 800, padding: '2px 6px', borderRadius: 4 }}>
-                    {allDecks.length > 0 ? (allDecks.length === 1 ? '1 deck' : `${allDecks.length} decks`) : '★'}
-                  </div>
-                )}
-                <div style={{ padding: '8px 10px 6px' }}>
-                  <div style={{ fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{name}</div>
-                  {multiPrint
-                    ? <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{prints.length} prints</div>
-                    : <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>{api?.setName || rc.setCode}{rc.num ? ` · ${rc.num}` : ''}</div>
-                  }
-                  {(allDecks.length > 0 || onWishlist) && (
-                    <div style={{ fontSize: 10, marginTop: 3, lineHeight: 1.5 }}>
-                      {isNeeded && <div style={{ color: 'var(--orange)' }}>Need: {allNeededDecks.slice(0, 2).join(', ')}{allNeededDecks.length > 2 ? ` +${allNeededDecks.length - 2}` : ''}</div>}
-                      {coveredDecks.length > 0 && <div style={{ color: 'var(--green)' }}>{coveredDecks.slice(0, 2).join(', ')}{coveredDecks.length > 2 ? ` +${coveredDecks.length - 2}` : ''}</div>}
-                      {onWishlist && <div style={{ color: 'var(--yellow)' }}>★ Wishlist</div>}
-                    </div>
-                  )}
-                </div>
-                {/* Collapsible qty bar for player view */}
-                <div onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '5px 8px', borderTop: '1px solid var(--card-border)', background: 'var(--pill)' }}>
-                    {totalOwn === 0 ? (
-                      <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 12, color: 'var(--muted)' }}>×0</span>
-                    ) : (
-                      <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 12, fontWeight: 700 }}>
-                        {inDeck > 0 && <span style={{ color: 'var(--green)' }}>×{inDeck}</span>}
-                        {inDeck > 0 && spare > 0 && <span style={{ color: 'var(--muted)', fontWeight: 400 }}> + </span>}
-                        {spare > 0 && <span style={{ color: 'var(--orange)' }}>×{spare}</span>}
-                      </span>
-                    )}
-                    {multiPrint && (
-                      <button className="btn btn-ghost btn-xs" style={{ width: 22, height: 22, padding: 0, fontSize: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }} onClick={() => toggleExpand(name)}>
-                        {isExpanded ? '▲' : '▼'}
-                      </button>
-                    )}
-                  </div>
-                  {isExpanded && (
-                    <div style={{ borderTop: '1px solid var(--card-border)', padding: '4px 6px', background: 'var(--bg)' }}>
-                      {prints.map(({ rc: prc }) => {
-                        const qty = collQty(state.collection[cardKey(prc)]);
-                        return (
-                          <div key={cardKey(prc)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 0', borderBottom: '1px solid var(--card-border)', fontSize: 10 }}>
-                            <span style={{ flex: 1, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{prc.setCode} {prc.num}</span>
-                            <button className="btn btn-ghost btn-xs" style={{ width: 20, height: 20, padding: 0, fontSize: 13 }} onClick={() => adjustCollectionQty(prc, -1, state, dispatch)}>−</button>
-                            <span style={{ fontWeight: 700, minWidth: 18, textAlign: 'center', color: qty > 0 ? 'var(--green)' : 'var(--muted)' }}>×{qty}</span>
-                            <button className="btn btn-ghost btn-xs" style={{ width: 20, height: 20, padding: 0, fontSize: 13 }} onClick={() => adjustCollectionQty(prc, 1, state, dispatch)}>+</button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {playerGroups.length > CARDS_PER_PAGE && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--card-border)' }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>Prev</button>
-            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Page {page} of {Math.ceil(playerGroups.length / CARDS_PER_PAGE)}</span>
-            <button className="btn btn-ghost btn-sm" onClick={() => setPage(p => Math.min(Math.ceil(playerGroups.length / CARDS_PER_PAGE), p + 1))} disabled={page === Math.ceil(playerGroups.length / CARDS_PER_PAGE)}>Next</button>
-          </div>
-        )}
-        </>
-      )}
-
-      {playerModalGroup && (
-        <PlayerCardModal
-          group={playerModalGroup}
-          state={state}
-          dispatch={dispatch}
-          getDeckOwned={getDeckOwned}
-          onClose={() => setPlayerModalGroup(null)}
-        />
       )}
     </>
-  );
-}
-
-// ── Player Card Modal ─────────────────────────────────────────────────────────
-function PlayerCardModal({ group, state, dispatch, getDeckOwned, onClose }) {
-  const { name, displayEntry, prints, totalOwn } = group;
-  const displayApi = displayEntry.api;
-  const [infoCard, setInfoCard] = useState(null);
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', marginBottom: 16 }}>
-          {displayApi?.imageSmall && (
-            <img src={displayApi.imageLarge || displayApi.imageSmall} alt={name}
-              style={{ width: 100, borderRadius: 8, flexShrink: 0, cursor: 'pointer' }}
-              onClick={() => setInfoCard(displayApi)}
-              title="Click for card info"
-            />
-          )}
-          <div style={{ flex: 1 }}>
-            <h3 style={{ margin: '0 0 4px' }}>{name}</h3>
-            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 2 }}>
-              Total owned: <span style={{ color: 'var(--yellow)' }}>×{totalOwn}</span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)' }}>{prints.length} print{prints.length !== 1 ? 's' : ''}</div>
-          </div>
-        </div>
-
-        {prints.map(({ rc, own, api }) => {
-          const ck = cardKey(rc);
-          const standalone = collQty(state.collection[ck]);
-
-          // Build deck rows by checking per-copy blings so each deck slot is attributed
-          // to whichever physical print fills it, not just the deck's listed print.
-          function normBlingArr(stored, qty) {
-            if (!stored) return new Array(qty).fill(null);
-            if (!Array.isArray(stored)) return new Array(qty).fill(stored);
-            const arr = [...stored]; while (arr.length < qty) arr.push(null);
-            return arr.slice(0, qty);
-          }
-          const deckRows = state.decks.filter(d => !d.isBuyList).flatMap(d => {
-            let ownedAsThis = 0, totalSlots = 0;
-            for (const rawRc of d.rawCards) {
-              const ownedCount = d.ownedMap?.[cardKey(rawRc)] ?? 0;
-              const blings = normBlingArr(d.blingSel?.[cardKey(rawRc)], rawRc.qty);
-              for (let i = 0; i < rawRc.qty; i++) {
-                const b = blings[i];
-                const copyKey = b && (b.setCode !== rawRc.setCode || b.number !== rawRc.num)
-                  ? cardKey({ name: rawRc.name, setCode: b.setCode, num: b.number })
-                  : cardKey(rawRc);
-                if (copyKey === ck) {
-                  totalSlots++;
-                  if (i < ownedCount) ownedAsThis++;
-                }
-              }
-            }
-            if (totalSlots === 0) return [];
-            return [{ deck: d, owned: ownedAsThis, total: totalSlots }];
-          });
-          const rowStyle = { fontSize: 11, display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--card-border)', marginTop: 4, paddingTop: 4 };
-          const btnStyle = { width: 24, height: 24, padding: 0, fontSize: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, flexShrink: 0 };
-
-          return (
-            <div key={ck} style={{ marginBottom: 10, padding: '10px 12px', background: 'var(--pill)', borderRadius: 8, border: '1px solid var(--card-border)' }}>
-              {/* Header: set name + price */}
-              <div>
-                <span style={{ fontWeight: 800, fontSize: 12 }}>{api?.setName || rc.setCode}</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 6 }}>#{rc.num}</span>
-                {api?.marketPrice != null && <span style={{ fontSize: 10, color: 'var(--green)', marginLeft: 8 }}>${api.marketPrice.toFixed(2)}</span>}
-              </div>
-              {/* Deck breakdown rows */}
-              {deckRows.map(({ deck, owned, total }) => (
-                <div key={deck.id} style={{ ...rowStyle, color: 'var(--muted)' }}>
-                  <span>{deck.name}</span>
-                  <span style={{ color: owned >= total ? 'var(--green)' : owned > 0 ? 'var(--orange)' : 'var(--muted)' }}>
-                    {owned}/{total} covered
-                  </span>
-                </div>
-              ))}
-              {/* Not in a deck — standalone collection qty, always shown */}
-              <div style={{ ...rowStyle, color: 'var(--muted)' }}>
-                <span>Not in a deck</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={e => e.stopPropagation()}>
-                  <button className="btn btn-ghost btn-xs" style={btnStyle} onClick={() => adjustCollectionQty(rc, -1, state, dispatch)}>−</button>
-                  <span style={{ fontWeight: 700, fontSize: 12, minWidth: 22, textAlign: 'center', color: standalone > 0 ? 'var(--orange)' : 'var(--muted)' }}>×{standalone}</span>
-                  <button className="btn btn-ghost btn-xs" style={btnStyle} onClick={() => adjustCollectionQty(rc, 1, state, dispatch)}>+</button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-
-        <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>Done</button>
-        </div>
-      </div>
-      {infoCard && <CardInfoModal card={infoCard} onClose={() => setInfoCard(null)} />}
-    </div>
   );
 }
 
