@@ -94,12 +94,12 @@ export default function CardDetailContent({ card, onCardChange }) {
     });
   }, [card?.id]);
 
-  // Other Appearances: all cards featuring the same Pokédex number.
+  // All {Pokémon} cards: every card featuring the same Pokédex number, including this one.
   useEffect(() => {
     if (!card?.nationalPokedexNumbers?.length) { setAppearances([]); return; }
     setLoadingApps(true);
     fetchAllAppearances(card.nationalPokedexNumbers).then(results => {
-      setAppearances(results.filter(p => p.id !== card.id));
+      setAppearances(results);
       setLoadingApps(false);
     });
   }, [card?.id, card?.nationalPokedexNumbers?.[0]]);
@@ -216,11 +216,11 @@ export default function CardDetailContent({ card, onCardChange }) {
         </div>
       )}
 
-      {/* Other Appearances — every card featuring the same Pokédex number */}
+      {/* All {Pokémon} cards — every card featuring the same Pokédex number, including this one */}
       {(loadingApps || appearances.length > 0) && (
         <div style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid var(--card-border)' }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-            Other Appearances{loadingApps && ' …'}
+            All {card.name} cards{loadingApps && ' …'}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {appearances.map(p => (
@@ -228,13 +228,14 @@ export default function CardDetailContent({ card, onCardChange }) {
                 key={p.id}
                 title={`${p.name}\n${p.setName} #${p.number}`}
                 style={{
-                  background: 'none', border: '2px solid transparent', borderRadius: 6,
+                  background: 'none', borderRadius: 6,
+                  border: `2px solid ${p.id === card.id ? 'var(--orange)' : 'transparent'}`,
                   padding: 0, cursor: loadingAppCard === p.id ? 'wait' : 'pointer',
                   opacity: loadingAppCard && loadingAppCard !== p.id ? 0.5 : 1,
                   transition: 'border-color .15s',
                 }}
-                onMouseEnter={e => { if (!loadingAppCard) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'transparent'; }}
+                onMouseEnter={e => { if (!loadingAppCard && p.id !== card.id) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = p.id === card.id ? 'var(--orange)' : 'transparent'; }}
                 onClick={async () => {
                   if (loadingAppCard) return;
                   setLoadingAppCard(p.id);
