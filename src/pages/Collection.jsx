@@ -1247,16 +1247,19 @@ const ENERGY_COLOR = {
   Psychic:'#9b59b6', Fighting:'#b87333', Darkness:'#555', Metal:'#8e9dad',
   Dragon:'#7b68ee', Fairy:'#e91e8c', Colorless:'#aaa',
 };
+function TypeIcon({ type }) {
+  return (
+    <span style={{ display:'inline-block', width:14, height:14, borderRadius:'50%',
+      background: ENERGY_COLOR[type]||'#aaa', border:'1px solid rgba(255,255,255,.2)',
+      fontSize:7, color:'#fff', textAlign:'center', lineHeight:'14px', fontWeight:800 }}
+      title={type}>{type[0]}</span>
+  );
+}
 function EnergyCost({ cost }) {
   if (!cost?.length) return null;
   return (
     <span style={{ display:'inline-flex', gap:2, verticalAlign:'middle', marginRight:4 }}>
-      {cost.map((type, i) => (
-        <span key={i} style={{ display:'inline-block', width:14, height:14, borderRadius:'50%',
-          background: ENERGY_COLOR[type]||'#aaa', border:'1px solid rgba(255,255,255,.2)',
-          fontSize:7, color:'#fff', textAlign:'center', lineHeight:'14px', fontWeight:800 }}
-          title={type}>{type[0]}</span>
-      ))}
+      {cost.map((type, i) => <TypeIcon key={i} type={type} />)}
     </span>
   );
 }
@@ -1504,11 +1507,18 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
             </div>
           ))}
 
-          {/* Weakness / Retreat */}
-          {(displayCard.weaknesses?.length > 0 || displayCard.retreatCost != null) && (
-            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)' }}>
+          {/* Weakness / Resistance / Retreat */}
+          {(displayCard.weaknesses?.length > 0 || displayCard.resistances?.length > 0 || displayCard.retreatCost != null) && (
+            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
               {displayCard.weaknesses?.map((w, i) => (
-                <span key={i}>Weakness: <strong style={{ color: 'var(--text)' }}>{w.type} {w.value}</strong></span>
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Weakness: <TypeIcon type={w.type} /> <strong style={{ color: 'var(--text)' }}>{w.value}</strong>
+                </span>
+              ))}
+              {displayCard.resistances?.map((r, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Resistance: <TypeIcon type={r.type} /> <strong style={{ color: 'var(--text)' }}>{r.value}</strong>
+                </span>
               ))}
               {displayCard.retreatCost != null && (
                 <span>Retreat: <strong style={{ color: 'var(--text)' }}>{displayCard.retreatCost === 0 ? 'Free' : `×${displayCard.retreatCost}`}</strong></span>
