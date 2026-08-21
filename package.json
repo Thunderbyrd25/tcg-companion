@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "migrate": "node --env-file=.env.local scripts/migrate.js",
+    "renormalize": "node --env-file=.env.local scripts/renormalize.js",
     "backfill": "node --env-file=.env.local scripts/backfill.js",
     "update-prize-pack": "node scripts/updatePrizePack.js"
   },

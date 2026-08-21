@@ -44,11 +44,23 @@ function legalitiesObject(card) {
   return out;
 }
 
+// Scrydex inconsistently names basic energy cards "Basic X Energy" (pokemontcg.io
+// always used "X Energy", no prefix) -- the frontend's whole basic-energy lookup
+// path (expandEnergySymbols, the SVE-fallback in lookupCard, etc.) assumes the
+// pokemontcg.io convention, so normalize to it here rather than touching every
+// caller.
+function normalizeEnergyName(card) {
+  if (card.supertype === 'Energy' && (card.subtypes || []).includes('Basic')) {
+    return card.name.replace(/^Basic /, '');
+  }
+  return card.name;
+}
+
 export function normalizeCard(card) {
   const front = (card.images || []).find(i => i.type === 'front') || card.images?.[0] || {};
   return {
     id: card.id,
-    name: card.name,
+    name: normalizeEnergyName(card),
     supertype: card.supertype,
     subtypes: card.subtypes || [],
     types: card.types || [],
@@ -76,7 +88,7 @@ export function cardToRow(card) {
   return {
     id: card.id,
     scrydex_id: card.id,
-    name: card.name,
+    name: normalized.name,
     set_id: card.expansion?.id || null,
     ptcgo_code: card.expansion?.code || null,
     number: card.number || null,

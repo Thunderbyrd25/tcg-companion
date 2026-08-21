@@ -694,14 +694,15 @@ export async function searchCards(query, setId, page = 1, ptcgoCode = null) {
 
 // ── TCGDex shared constants ───────────────────────────────────────────────────
 const TCGDEX_API = 'https://api.tcgdex.net/v2/en';
-// Maps our internal set IDs → TCGDex set IDs (only entries that differ)
-const TCGDEX_ID_MAP = {
-  'me1': 'me01', 'me2': 'me02', 'me2pt5': 'me02.5', 'me3': 'me03', 'mep': 'mep',
-};
+// Maps our internal set IDs → TCGDex set IDs (only entries that differ).
+// Mega Evolution sets (me1-me3, mep) used to live here because pokemontcg.io
+// didn't carry them — our Scrydex-backed backend now has complete, correct
+// data (including images) for all of them, so they no longer need the TCGDex
+// detour. Left empty rather than removed, as a fallback for any future set
+// our backend hasn't backfilled yet.
+const TCGDEX_ID_MAP = {};
 const TCGDEX_ID_MAP_REVERSE = Object.fromEntries(Object.entries(TCGDEX_ID_MAP).map(([k,v])=>[v,k]));
-export const TCGDEX_SET_TOTALS = {
-  'me1': 188, 'me2': 130, 'me2pt5': 295, 'me3': 124, 'mep': 45,
-};
+export const TCGDEX_SET_TOTALS = {};
 const tcgdexSetCache = new Map();
 
 // Internal helper — fetches a TCGDex set by TCGDex ID and returns cards in our format
