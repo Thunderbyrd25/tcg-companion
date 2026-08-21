@@ -358,7 +358,7 @@ export const SPLASH_DEFS = {
 
   // ── EX Ruby & Sapphire era ────────────────────────────────────────────────
   'era-RS-PK': [
-    { name: 'Rayquaza ex', setCode: 'DF'},
+    { name: 'Rayquaza ex δ', setCode: 'DF'},
     { name: "Holon's Castform", setCode: 'HP'},
   ],
 
