@@ -46,7 +46,7 @@ const cache = new Map();
 
 // Persist card cache to localStorage so it survives page reloads
 const CACHE_KEY = 'tcg_card_cache';
-const CACHE_VERSION = 16;
+const CACHE_VERSION = 17;
 
 (function hydrateCache() {
   try {
@@ -274,7 +274,7 @@ export async function lookupCard(setCode, num, cardName) {
 
 // Fetch and cache set metadata (logos, totals, release dates)
 const SETS_META_KEY = 'tcg_sets_meta';
-const SETS_META_VERSION = 4;
+const SETS_META_VERSION = 5;
 let setsMetaCache = null;
 
 export async function fetchSetsMetadata() {
