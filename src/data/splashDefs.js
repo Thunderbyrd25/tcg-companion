@@ -112,7 +112,7 @@ export const SPLASH_DEFS = {
     { name: 'Zacian V', setCode: 'SSH' },
   ],
   'era-SSH-ASR': [
-    { name: 'Palkia VSTAR', setCode: 'ASR' },
+    { name: 'Origin Forme Palkia VSTAR', setCode: 'ASR' },
     { name: 'Zacian V', setCode: 'SSH' },
   ],
   'era-SSH-BRS': [
