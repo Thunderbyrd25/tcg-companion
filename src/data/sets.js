@@ -5,9 +5,9 @@ export const ALL_SETS = [
   {code:'POR',name:'Perfect Order',id:'me3',era:'ME'},
   {code:'ASC',name:'Ascended Heroes',id:'me2pt5',era:'ME'},
   {code:'PFL',name:'Phantasmal Flames',id:'me2',era:'ME'},
+  {code:'MEG',name:'Mega Evolution',id:'me1',era:'ME'},
   {code:'MEE',name:'Mega Evolution Energies',id:'mee',era:'ME'},
   {code:'MEP',name:'Mega Evolution Promos',id:'mep',era:'ME'},
-  {code:'MEG',name:'Mega Evolution',id:'me1',era:'ME'},
   // ── Scarlet & Violet ────────────────────────────────────────────────────────
   {code:'BLK',name:'Black Bolt',id:'zsv10pt5',era:'SV'},
   {code:'WHT',name:'White Flare',id:'rsv10pt5',era:'SV'},
