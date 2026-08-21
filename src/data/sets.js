@@ -1,5 +1,7 @@
 export const ALL_SETS = [
   // ── Mega Evolution ──────────────────────────────────────────────────────────
+  {code:'PBL',name:'Pitch Black',id:'me5',era:'ME'},
+  {code:'CRI',name:'Chaos Rising',id:'me4',era:'ME'},
   {code:'POR',name:'Perfect Order',id:'me3',era:'ME'},
   {code:'ASC',name:'Ascended Heroes',id:'me2pt5',era:'ME'},
   {code:'PFL',name:'Phantasmal Flames',id:'me2',era:'ME'},
@@ -169,7 +171,7 @@ export const ALL_SETS = [
 
 export const PTCGO_TO_SET_ID = {
   // Mega Evolution
-  'POR':'me3','ASC':'me2pt5','PFL':'me2','MEE':'mee','MEP':'mep','MEG':'me1',
+  'PBL':'me5','CRI':'me4','POR':'me3','ASC':'me2pt5','PFL':'me2','MEE':'mee','MEP':'mep','MEG':'me1',
   // Scarlet & Violet
   'WHT':'rsv10pt5','BLK':'zsv10pt5','DRI':'sv10','JTG':'sv9',
   'PRE':'sv8pt5','SSP':'sv8','SCR':'sv7','SFA':'sv6pt5',

@@ -98,12 +98,16 @@ async function upsertCard(card) {
 }
 
 async function backfillSet(exp) {
+  // Scrydex caps pageSize at 100 regardless of what's requested, so track actual
+  // cards seen against total_count rather than assuming the requested page size held.
   let page = 1;
+  let seen = 0;
   while (true) {
-    const body = await scrydexGet(`/cards?q=${encodeURIComponent(`expansion.id:${exp.id}`)}&include=prices&pageSize=250&page=${page}`);
+    const body = await scrydexGet(`/cards?q=${encodeURIComponent(`expansion.id:${exp.id}`)}&include=prices&pageSize=100&page=${page}`);
     for (const card of body.data) await upsertCard(card);
-    console.log(`  ${exp.id}: page ${page}, ${body.data.length} cards`);
-    if (page * 250 >= body.total_count) break;
+    seen += body.data.length;
+    console.log(`  ${exp.id}: page ${page}, ${body.data.length} cards (${seen}/${body.total_count})`);
+    if (seen >= body.total_count || body.data.length === 0) break;
     page++;
   }
 }
@@ -122,17 +126,24 @@ async function main() {
     if (done.has(exp.id)) continue;
 
     console.log(`Backfilling ${exp.name} (${exp.id})...`);
-    try {
-      await backfillSet(exp);
-      done.add(exp.id);
-      saveProgress({ completedSets: [...done] });
-    } catch (err) {
-      if (err.message === 'CREDIT_LIMIT_REACHED') {
-        console.log(`Credit limit (${creditLimit}) reached. Progress saved — re-run to continue.`);
+    let attempt = 0;
+    while (true) {
+      try {
+        await backfillSet(exp);
+        done.add(exp.id);
         saveProgress({ completedSets: [...done] });
-        process.exit(0);
+        break;
+      } catch (err) {
+        if (err.message === 'CREDIT_LIMIT_REACHED') {
+          console.log(`Credit limit (${creditLimit}) reached. Progress saved — re-run to continue.`);
+          saveProgress({ completedSets: [...done] });
+          process.exit(0);
+        }
+        attempt++;
+        if (attempt > 3) throw err;
+        console.log(`  transient error on ${exp.id} (attempt ${attempt}): ${err.message || err}. Retrying in 3s...`);
+        await new Promise(r => setTimeout(r, 3000));
       }
-      throw err;
     }
   }
 
