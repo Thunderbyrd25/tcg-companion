@@ -175,7 +175,11 @@ export default function CardDetailContent({ card, onCardChange }) {
             </span>
           ))}
           {card.retreatCost != null && (
-            <span>Retreat: <strong style={{ color: 'var(--text)' }}>{card.retreatCost === 0 ? 'Free' : `×${card.retreatCost}`}</strong></span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              Retreat: {card.retreatCost === 0
+                ? <strong style={{ color: 'var(--text)' }}>Free</strong>
+                : Array.from({ length: card.retreatCost }, (_, i) => <TypeIcon key={i} type="Colorless" />)}
+            </span>
           )}
         </div>
       )}

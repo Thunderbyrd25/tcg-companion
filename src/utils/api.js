@@ -46,7 +46,7 @@ const cache = new Map();
 
 // Persist card cache to localStorage so it survives page reloads
 const CACHE_KEY = 'tcg_card_cache';
-const CACHE_VERSION = 18;
+const CACHE_VERSION = 19;
 
 (function hydrateCache() {
   try {
@@ -150,7 +150,9 @@ export function parseCard(c) {
     abilities: c.abilities || [],
     weaknesses: c.weaknesses || [],
     resistances: c.resistances || [],
-    retreatCost: c.retreatCost?.length ?? null,
+    // Non-Pokémon cards have an empty retreatCost array, not a missing one, so
+    // .length ?? null would wrongly compute 0 ("Free") for a Trainer/Energy card.
+    retreatCost: c.supertype === 'Pokémon' ? (c.retreatCost?.length ?? null) : null,
     rules: c.rules || [],
     nationalPokedexNumbers: c.nationalPokedexNumbers || [],
   };

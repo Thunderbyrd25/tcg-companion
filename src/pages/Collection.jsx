@@ -1544,7 +1544,11 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
                 </span>
               ))}
               {displayCard.retreatCost != null && (
-                <span>Retreat: <strong style={{ color: 'var(--text)' }}>{displayCard.retreatCost === 0 ? 'Free' : `×${displayCard.retreatCost}`}</strong></span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  Retreat: {displayCard.retreatCost === 0
+                    ? <strong style={{ color: 'var(--text)' }}>Free</strong>
+                    : Array.from({ length: displayCard.retreatCost }, (_, i) => <TypeIcon key={i} type="Colorless" />)}
+                </span>
               )}
             </div>
           )}
