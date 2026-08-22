@@ -1323,8 +1323,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
         /p$/i.test(id) ||
         name.includes('promo') ||
         name.includes('prize') ||
-        p.rawTcg?.stampedHolofoil?.market != null ||
-        p.rawTcg?.stamped?.market != null
+        p.stampedPrice != null
       );
     }
 
@@ -1388,9 +1387,7 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
           p.id !== card.id &&
           p.setId !== card.setId &&
           isPromoSet(p) &&
-          (p.rawTcg?.stampedHolofoil?.market != null ||
-           p.rawTcg?.stamped?.market != null ||
-           p.rarity === 'Promo')
+          (p.stampedPrice != null || p.rarity === 'Promo')
         ) ?? null;
       }
 

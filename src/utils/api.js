@@ -106,6 +106,16 @@ function cacheKey(setCode, num) {
   return `${setCode}-${num}`.toLowerCase();
 }
 
+// Scrydex names promo-stamp price variants after the specific stamp/signature
+// (e.g. "playPokemonStampHolofoil", "yukaFurusawa" for a 2011 Worlds winner's
+// autograph stamp) rather than pokemontcg.io's generic "stampedHolofoil"/"stamped"
+// keys, so match any variant key that mentions "stamp" instead of an exact name.
+function findStampedPrice(tcg) {
+  if (!tcg) return null;
+  const key = Object.keys(tcg).find(k => /stamp/i.test(k));
+  return key ? tcg[key].market ?? null : null;
+}
+
 export function parseCard(c) {
   const tcg = c.tcgplayer?.prices;
   const marketPrice =
@@ -131,7 +141,7 @@ export function parseCard(c) {
     tcgplayerUrl: c.tcgplayer?.url || '',
     marketPrice,
     reverseHoloPrice: tcg?.reverseHolofoil?.market ?? null,
-    stampedPrice: tcg?.stampedHolofoil?.market ?? tcg?.stamped?.market ?? null,
+    stampedPrice: findStampedPrice(tcg),
     rawTcg: tcg || null,
     types: c.types || [],
     hp: c.hp || '',
