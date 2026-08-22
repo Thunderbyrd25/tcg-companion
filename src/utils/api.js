@@ -46,7 +46,7 @@ const cache = new Map();
 
 // Persist card cache to localStorage so it survives page reloads
 const CACHE_KEY = 'tcg_card_cache';
-const CACHE_VERSION = 17;
+const CACHE_VERSION = 18;
 
 (function hydrateCache() {
   try {
