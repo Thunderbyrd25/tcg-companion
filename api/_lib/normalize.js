@@ -20,7 +20,11 @@ const NM_CONDITIONS = ['NM', 'LP', 'MP', 'HP', 'DM'];
 function priceForVariant(variant) {
   const prices = variant.prices || [];
   const byCondition = NM_CONDITIONS.map(c => prices.find(p => p.condition === c)).find(Boolean) || prices[0];
-  return byCondition?.market != null ? { market: byCondition.market } : null;
+  // `origin` is Scrydex's human-readable description of what this variant actually is
+  // (e.g. "Prize Pack Series Cards", "Yuka Furusawa - Power Cottonweed - 2010 World
+  // Championships Deck") -- keep it alongside market so the frontend can classify
+  // stamp/promo variants by what they say, not by guessing from the cryptic key name.
+  return byCondition?.market != null ? { market: byCondition.market, origin: variant.origin || null } : null;
 }
 
 function buildTcgplayer(card) {

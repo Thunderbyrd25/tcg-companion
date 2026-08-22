@@ -56,25 +56,67 @@ function QtyBar({ rc, state, dispatch, style }) {
   );
 }
 
+// `keys` are exact Scrydex tcgplayer.prices variant names to match (confirmed against
+// real data, not guessed from pokemontcg.io's older naming). `stampOrigin` entries match
+// any remaining variant key containing "stamp" whose `origin` text (Scrydex's own
+// human-readable description of the variant, e.g. "Prize Pack Series Cards" or
+// "Yuka Furusawa - Power Cottonweed - 2010 World Championships Deck") matches the
+// pattern -- checked in array order, first match wins, so put specific patterns before
+// the gymstamped catch-all.
 const VARIANTS = [
   // Standard treatments
   { key: 'normal',        label: 'Normal' },
-  { key: 'reverseHolo',   label: 'Reverse Holo' },
-  { key: 'cosmoHolo',     label: 'Cosmos Holo' },
+  { key: 'reverseHolo',   label: 'Reverse Holo', keys: ['reverseHolofoil', 'energyReverseHolofoil'] },
+  { key: 'cosmoHolo',     label: 'Cosmos Holo', keys: ['cosmosHolofoil'] },
+  { key: 'crackedIceHolo', label: 'Cracked Ice Holo', keys: ['crackedIceHolofoil'] },
   // SWSH alternate foil treatments
-  { key: 'pokeball',      label: 'Poké Ball Holo' },
-  { key: 'masterball',    label: 'Master Ball Holo' },
+  { key: 'pokeball',      label: 'Poké Ball Holo', keys: ['pokeBallReverseHolofoil'] },
+  { key: 'masterball',    label: 'Master Ball Holo', keys: ['masterBallReverseHolofoil'] },
+  { key: 'duskball',      label: 'Dusk Ball Holo', keys: ['duskBallReverseHolofoil'] },
+  { key: 'loveball',      label: 'Love Ball Holo', keys: ['loveBallReverseHolofoil'] },
+  { key: 'jumbo',         label: 'Jumbo', keys: ['jumbo'] },
   // Classic-era edition variants (Base Set, Jungle, Fossil, etc.)
-  { key: 'firstEdHolo',   label: '1st Ed. Holofoil' },
-  { key: 'firstEdNormal', label: '1st Ed. Non-Holo' },
-  { key: 'unlimHolo',     label: 'Unlimited Holofoil' },
-  { key: 'unlimNormal',   label: 'Unlimited Non-Holo' },
-  // Promo / stamped
-  { key: 'prizestamped',  label: 'Prize Stamped' },
-  { key: 'prerelease',    label: 'Pre-Release' },
-  { key: 'gymstamped',    label: 'Gym / League Stamped' },
-  { key: 'worldchamp',    label: 'World Championship' },
+  { key: 'firstEdHolo',   label: '1st Ed. Holofoil', keys: ['firstEditionHolofoil'] },
+  { key: 'firstEdNormal', label: '1st Ed. Non-Holo', keys: ['firstEdition'] },
+  { key: 'firstEdShadowless', label: '1st Ed. Shadowless', keys: ['firstEditionShadowless'] },
+  { key: 'unlimHolo',     label: 'Unlimited Holofoil', keys: ['unlimitedHolofoil'] },
+  { key: 'unlimNormal',   label: 'Unlimited Non-Holo', keys: ['unlimited'] },
+  { key: 'unlimShadowless', label: 'Unlimited Shadowless', keys: ['unlimitedShadowless'] },
+  // Promo / stamped -- classified by origin text, in priority order.
+  // worldchamp uses originMatch (no key-name requirement) because World Championship Deck
+  // variants are keyed by the competitor's name (e.g. "yukaFurusawa"), not anything
+  // containing "stamp" -- the others really are always "...Stamp"-named keys in practice,
+  // so stampOrigin keeps that requirement to avoid the gymstamped catch-all grabbing
+  // unrelated variants that happen to have some origin text.
+  { key: 'prizestamped',  label: 'Prize Stamped', stampOrigin: /prize pack/i },
+  { key: 'worldchamp',    label: 'World Championship', originMatch: /world championship/i },
+  { key: 'prerelease',    label: 'Pre-Release', stampOrigin: /pre-?release/i },
+  { key: 'gymstamped',    label: 'Gym / League Stamped', stampOrigin: /.*/ }, // catch-all: any other stamp
 ];
+
+// Resolves every VARIANTS entry to a market price from a card's tcgplayer.prices object.
+// Processes VARIANTS in order and "claims" whichever raw price-variant key it matched,
+// so the gymstamped catch-all only picks up stamp variants nothing more specific claimed.
+function computeVariantPrices(rawTcg) {
+  const out = { normal: rawTcg?.holofoil?.market ?? rawTcg?.normal?.market ?? null };
+  const claimed = new Set();
+  for (const v of VARIANTS) {
+    if (v.key === 'normal') continue;
+    let foundKey = null;
+    if (v.keys) {
+      foundKey = v.keys.find(k => rawTcg?.[k]?.market != null && !claimed.has(k));
+    } else if (v.stampOrigin) {
+      foundKey = Object.keys(rawTcg || {}).find(k =>
+        !claimed.has(k) && /stamp/i.test(k) && v.stampOrigin.test(rawTcg[k]?.origin || '')
+      );
+    } else if (v.originMatch) {
+      foundKey = Object.keys(rawTcg || {}).find(k => !claimed.has(k) && v.originMatch.test(rawTcg[k]?.origin || ''));
+    }
+    out[v.key] = foundKey ? rawTcg[foundKey].market : null;
+    if (foundKey) claimed.add(foundKey);
+  }
+  return out;
+}
 
 export default function Collection({ onOpenDeck }) {
   const { state, dispatch, getApiData, getDeckOwned } = useStore();
@@ -1396,39 +1438,23 @@ function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsag
     });
   }, [card.id]);
 
-  // Prices — primarily from rawTcg (same card entry on TCGPlayer, different variant keys).
-  // stampedCard from fetchAllPrints is a fallback for sets where the stamped version is a
-  // separate API card entry entirely (some older promo sets).
+  // Prices — resolved from rawTcg (same card entry on TCGPlayer, different variant keys)
+  // via computeVariantPrices. stampedCard from fetchAllPrints is a fallback for sets where
+  // the stamped version is a separate API card entry entirely (some older promo sets).
+  const variantPrices = computeVariantPrices(card.rawTcg);
   const prices = {
-    normal:        card.rawTcg?.holofoil?.market ?? card.rawTcg?.normal?.market ?? null,
-    reverseHolo:   card.rawTcg?.reverseHolofoil?.market ?? null,
-    cosmoHolo:     card.rawTcg?.cosmosHolofoil?.market ?? null,
-    pokeball:      null,
-    masterball:    null,
-    firstEdHolo:   card.rawTcg?.['1stEditionHolofoil']?.market ?? null,
-    firstEdNormal: card.rawTcg?.['1stEditionNormal']?.market ?? null,
-    unlimHolo:     card.rawTcg?.unlimitedHolofoil?.market ?? null,
-    unlimNormal:   card.rawTcg?.unlimitedNormal?.market ?? null,
-    // Prize Pack price: live-fetched via proxy (falls back to bundled JSON price), then API card data
-    prizestamped:  prizePackPrice ?? card.stampedPrice ?? stampedCard?.marketPrice ?? stampedCard?.rawTcg?.holofoil?.market ?? null,
-    prerelease:    null,
-    gymstamped:    null,
-    worldchamp:    null,
+    ...variantPrices,
+    // Live-fetched via proxy (falls back to bundled JSON price), then the precisely-matched
+    // rawTcg price, then the generic same-name-different-set fallback.
+    prizestamped: prizePackPrice ?? variantPrices.prizestamped ?? stampedCard?.marketPrice ?? stampedCard?.rawTcg?.holofoil?.market ?? null,
   };
 
   function isVariantAvailable(key) {
     if (getVariantQty(card, key) > 0) return true; // always show if already tracked
     if (key === 'normal') return true;
-    if (key === 'reverseHolo')   return card.rawTcg?.reverseHolofoil?.market != null;
-    if (key === 'cosmoHolo')     return card.rawTcg?.cosmosHolofoil?.market != null;
-    if (key === 'firstEdHolo')   return card.rawTcg?.['1stEditionHolofoil']?.market != null;
-    if (key === 'firstEdNormal') return card.rawTcg?.['1stEditionNormal']?.market != null;
-    if (key === 'unlimHolo')     return card.rawTcg?.unlimitedHolofoil?.market != null;
-    if (key === 'unlimNormal')   return card.rawTcg?.unlimitedNormal?.market != null;
-    // Prize Pack lookup → immediate; stampedPrice on base card → immediate; API fallback after load
-    if (key === 'prizestamped')  return hasPrizePack || card.stampedPrice != null || (!loadingStamped && stampedCard != null);
-    // pokeball/masterball/prerelease/gymstamped/worldchamp: only show if user already owns some
-    return false;
+    // Prize Pack lookup → immediate; API fallback after load
+    if (key === 'prizestamped') return hasPrizePack || prices.prizestamped != null || (!loadingStamped && stampedCard != null);
+    return prices[key] != null;
   }
 
   const visibleVariants = VARIANTS.filter(v => isVariantAvailable(v.key));
