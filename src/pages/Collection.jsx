@@ -8,7 +8,7 @@ import { ALL_SETS } from '../data/sets';
 const SET_ID_TO_CODE = Object.fromEntries(ALL_SETS.filter(s => s.id).map(s => [s.id, s.code]));
 import prizePackLookup from '../data/prizePackLookup.json';
 import { ERA_FORMATS, ERA_GROUPS } from '../data/eras';
-import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchAllAppearances, lookupCard, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
+import { searchCards, searchByName, fetchSetsMetadata, fetchAllPrints, fetchPrizePackPrice, getCachedSetStats, fetchTCGDexSet, TCGDEX_SET_TOTALS, fetchReprintsForLegality } from '../utils/api';
 import DeckCard from '../components/DeckCard';
 import DeckModal from '../components/DeckModal';
 import ZoomableCardImage from '../components/ZoomableCardImage';
@@ -118,12 +118,30 @@ function computeVariantPrices(rawTcg) {
   return out;
 }
 
+// Per-variant collection quantity, stored as either a plain number (legacy, always
+// "normal") or an object of variant key -> qty. `rc` is the card's {name, setCode, num}.
+function getVariantQty(state, rc, variant) {
+  const val = state.collection[cardKey(rc)];
+  if (!val) return 0;
+  if (typeof val === 'number') return variant === 'normal' ? val : 0;
+  return val[variant] || 0;
+}
+function setVariantQty(state, dispatch, rc, variant, delta) {
+  const ck = cardKey(rc);
+  const cur = state.collection[ck];
+  const obj = (cur && typeof cur === 'object')
+    ? { ...cur }
+    : { normal: typeof cur === 'number' ? cur : 0, reverseHolo: 0, pokeball: 0, masterball: 0, prizestamped: 0 };
+  obj[variant] = Math.max(0, (obj[variant] || 0) + delta);
+  dispatch({ type: 'SET_COLLECTION', collection: { ...state.collection, [ck]: obj } });
+}
+
 export default function Collection({ onOpenDeck }) {
   const { state, dispatch, getApiData, getDeckOwned } = useStore();
   const [tab, setTab] = useState('Cards');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [collectionCard, setCollectionCard] = useState(null); // { rc, own, api, decks }
+  const [collectionCard, setCollectionCard] = useState(null); // { rc, api }
   const [importOpen, setImportOpen] = useState(false);
   const toast = useToast();
 
@@ -164,8 +182,9 @@ export default function Collection({ onOpenDeck }) {
       {importOpen && <ImportCollectionModal onClose={() => setImportOpen(false)} toast={toast} dispatch={dispatch} state={state} />}
 
       {collectionCard && (
-        <CollectionCardModal
-          entry={collectionCard}
+        <CardTrackingModal
+          rc={collectionCard.rc}
+          api={collectionCard.api}
           state={state}
           dispatch={dispatch}
           getDeckOwned={getDeckOwned}
@@ -176,37 +195,105 @@ export default function Collection({ onOpenDeck }) {
   );
 }
 
-// ── Collection Card Modal ─────────────────────────────────────────────────────
-function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) {
-  const { rc, own, api } = entry;
+// ── Card Tracking Modal ────────────────────────────────────────────────────────
+// Single shared card-detail-and-collection-tracking popup, used everywhere a card
+// gets clicked (Cards tab, Sets/Browse tab, Wishlist tab). `rc` ({name, setCode, num})
+// identifies which physical card slot is being tracked; `api` is that slot's parsed
+// card data. Other Prints/Appearances (via CardDetailContent) can swap which print's
+// text/image is being *viewed* without affecting which slot is being *tracked* --
+// same pattern the old per-tab modals already used individually.
+function CardTrackingModal({ rc, api, state, dispatch, getDeckOwned, onClose }) {
   const ck = cardKey(rc);
-  const standalone = collQty(state.collection[ck]);
   const [activeCard, setActiveCard] = useState(api);
   useEffect(() => { setActiveCard(api); }, [api?.id]);
   const displayCard = activeCard || api;
+  const [decksOpen, setDecksOpen] = useState(true);
+  const [stampedCard, setStampedCard] = useState(null);
+  const [loadingStamped, setLoadingStamped] = useState(true);
+  const [prizePackPrice, setPrizePackPrice] = useState(null);
 
-  const deckBreakdown = useMemo(() => {
+  const deckUsages = useMemo(() => {
     return state.decks
       .filter(d => !d.isBuyList)
       .flatMap(d => {
-        const owned = getDeckOwned(d, rc);
         const inDeck = d.rawCards.find(c => cardKey(c) === ck);
         if (!inDeck) return [];
-        return [{ deck: d, owned, total: inDeck.qty }];
+        return [{ deck: d, qty: inDeck.qty, owned: getDeckOwned(d, inDeck) }];
       });
-  }, [state.decks, rc, ck]);
+  }, [state.decks, ck]);
 
-  function setStandalone(val) {
-    const v = Math.max(0, parseInt(val) || 0);
-    const cur = state.collection[ck];
-    if (cur && typeof cur === 'object') {
-      // Adjust normal to bring total to v, clamped to 0
-      const others = collQty(cur) - (cur.normal || 0);
-      dispatch({ type: 'SET_COLLECTION', collection: { ...state.collection, [ck]: { ...cur, normal: Math.max(0, v - others) } } });
-    } else {
-      dispatch({ type: 'SET_COLLECTION', collection: { ...state.collection, [ck]: v } });
+  // Check Prize Pack lookup: same name + number exists as a Prize Pack Series card on TCGPlayer.
+  const normName = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const ppKey = api ? normName(api.name) + '|' + (api.number || '').replace(/^0+/, '') : '';
+  const bundledPrizePrice = prizePackLookup[ppKey]; // number or null (entry exists = has prize pack)
+  const hasPrizePack = ppKey in prizePackLookup;
+
+  // Fetch live prize pack price via proxy (falls back to bundled price if unavailable)
+  useEffect(() => {
+    if (!hasPrizePack || !api) return;
+    setPrizePackPrice(typeof bundledPrizePrice === 'number' ? bundledPrizePrice : null);
+    fetchPrizePackPrice(api.name, api.number).then(p => {
+      if (p != null) setPrizePackPrice(p);
+    });
+  }, [api?.id, hasPrizePack]);
+
+  // Stamped-card fallback search: for older promo sets where the stamped version is a
+  // separate API card entry entirely, rather than a price variant on the same one.
+  useEffect(() => {
+    if (!api) return;
+    setLoadingStamped(true);
+
+    function isPromoSet(p) {
+      const id = p.setId?.toLowerCase() ?? '';
+      const name = p.setName?.toLowerCase() ?? '';
+      return (
+        p.rarity === 'Promo' ||
+        id.includes('promo') ||
+        /p$/i.test(id) ||
+        name.includes('promo') ||
+        name.includes('prize') ||
+        p.stampedPrice != null
+      );
     }
+
+    fetchAllPrints(api.name, {
+      supertype: api.supertype,
+      hp: api.hp,
+      attackNames: api.attacks,
+      attacksFull: api.attacksFull,
+    }).then(async prints => {
+      let stamped = prints.find(p => p.id !== api.id && p.setId !== api.setId && isPromoSet(p));
+      if (!stamped) {
+        const loose = await fetchAllPrints(api.name, { loose: true });
+        stamped = loose.find(p =>
+          p.id !== api.id &&
+          p.setId !== api.setId &&
+          isPromoSet(p) &&
+          (p.stampedPrice != null || p.rarity === 'Promo')
+        ) ?? null;
+      }
+      setStampedCard(stamped ?? null);
+      setLoadingStamped(false);
+    });
+  }, [api?.id]);
+
+  const variantPrices = computeVariantPrices(api?.rawTcg);
+  const prices = {
+    ...variantPrices,
+    prizestamped: prizePackPrice ?? variantPrices.prizestamped ?? stampedCard?.marketPrice ?? stampedCard?.rawTcg?.holofoil?.market ?? null,
+  };
+
+  function isVariantAvailable(key) {
+    if (getVariantQty(state, rc, key) > 0) return true; // always show if already tracked
+    if (key === 'normal') return true;
+    if (key === 'prizestamped') return hasPrizePack || prices.prizestamped != null || (!loadingStamped && stampedCard != null);
+    return prices[key] != null;
   }
+
+  const visibleVariants = VARIANTS.filter(v => isVariantAvailable(v.key));
+  const collectionTotal = VARIANTS.reduce((s, v) => s + getVariantQty(state, rc, v.key), 0);
+  const deckTotal = deckUsages.reduce((s, u) => s + u.owned, 0);
+  const total = collectionTotal + deckTotal;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -216,37 +303,61 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
         {displayCard ? <CardDetailContent card={displayCard} onCardChange={setActiveCard} /> : <div style={{ flex: 1, minWidth: 220 }}><h3 style={{ marginTop: 0 }}>{rc.name}</h3></div>}
 
         <div style={{ width: '100%', paddingTop: 10, borderTop: '1px solid var(--card-border)' }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
+            Track in Collection
+          </div>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-            Total owned: <span style={{ color: 'var(--yellow)' }}>×{own}</span>
+            Total owned: <span style={{ color: 'var(--yellow)' }}>×{total}</span>
+            {collectionTotal > 0 && deckTotal > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400, marginLeft: 8 }}>
+                ({collectionTotal} collection · {deckTotal} in decks)
+              </span>
+            )}
           </div>
 
-          {deckBreakdown.length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>In Decks</div>
-              {deckBreakdown.map(({ deck, owned, total }) => (
-                <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '5px 0', borderBottom: '1px solid var(--card-border)', fontSize: 12 }}>
-                  <span style={{ fontWeight: 700 }}>{deck.name}</span>
-                  <span>
-                    <span style={{ color: owned >= total ? 'var(--green)' : owned > 0 ? 'var(--orange)' : 'var(--muted)' }}>{owned}</span>
-                    <span style={{ color: 'var(--muted)' }}> / {total} in deck</span>
-                  </span>
-                </div>
-              ))}
+          {visibleVariants.map(({ key, label }) => {
+            const qty = getVariantQty(state, rc, key);
+            const price = prices[key];
+            const priceLoading = key === 'prizestamped' && prices.prizestamped == null && loadingStamped;
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <span style={{ flex: 1, fontSize: 12, fontWeight: qty > 0 ? 800 : 400, color: qty > 0 ? 'var(--text)' : 'var(--muted)' }}>{label}</span>
+                <span style={{ fontSize: 10, color: price != null ? 'var(--green)' : 'var(--muted)', minWidth: 44, textAlign: 'right' }}>
+                  {priceLoading ? '…' : price != null ? `$${price.toFixed(2)}` : '—'}
+                </span>
+                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(state, dispatch, rc, key, -1)}>−</button>
+                <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13, minWidth: 20, textAlign: 'center', color: qty > 0 ? 'var(--green)' : 'var(--muted)' }}>×{qty}</span>
+                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(state, dispatch, rc, key, 1)}>+</button>
+              </div>
+            );
+          })}
+
+          {deckUsages.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: '1px solid var(--card-border)', paddingTop: 12 }}>
+              <button
+                onClick={() => setDecksOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--fg)', cursor: 'pointer', padding: 0, marginBottom: decksOpen ? 8 : 0, width: '100%', textAlign: 'left' }}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800 }}>In Decks</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>({deckUsages.length})</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)' }}>{decksOpen ? '▲' : '▼'}</span>
+              </button>
+              {decksOpen && deckUsages.map(({ deck, qty, owned }) => {
+                const allOwned = owned >= qty;
+                return (
+                  <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 6, marginBottom: 4, background: 'var(--darker)' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>{deck.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>needs ×{qty}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: allOwned ? 'var(--green)' : 'var(--orange)' }}>
+                        {owned}/{qty} owned
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
-
-          <div style={{ marginBottom: 4 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Standalone (not in any deck)</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone - 1)}>−</button>
-              <input
-                type="number" min={0} value={standalone}
-                onChange={e => setStandalone(e.target.value)}
-                style={{ width: 50, textAlign: 'center', padding: '4px', fontSize: 13, fontWeight: 800 }}
-              />
-              <button className="btn btn-ghost btn-xs" style={{ width: 28, height: 28, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setStandalone(standalone + 1)}>+</button>
-            </div>
-          </div>
         </div>
 
         <div className="modal-actions" style={{ width: '100%' }}>
@@ -265,6 +376,11 @@ function CollectionCardModal({ entry, state, dispatch, getDeckOwned, onClose }) 
               </button>
             );
           })()}
+          {displayCard?.tcgplayerUrl && (
+            <a href={displayCard.tcgplayerUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
+              TCGPlayer ↗
+            </a>
+          )}
         </div>
       </div>
     </div>
@@ -671,7 +787,7 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
               style={{ background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 12, overflow: 'hidden', transition: 'all .2s', position: 'relative', cursor: 'pointer', opacity: own <= 0 ? .45 : 1 }}
               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = 'var(--blue)'; }}
               onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.borderColor = 'var(--card-border)'; }}
-              onClick={() => onCardClick({ rc, own, api, decks })}
+              onClick={() => onCardClick({ rc, api })}
             >
               {api?.imageSmall
                 ? <img src={api.imageSmall} alt={rc.name} style={{ width: '100%', display: 'block' }} loading="lazy" />
@@ -843,23 +959,6 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
       return [...prev, ...newCards.filter(c => !seen.has(`${c.setCode}||${c.number}`))];
     });
     setTotalCount(lastTotal); setPage(currentPage); setHasMore(morePages); setLoading(false);
-  }
-
-  function setVariantQty(card, variant, delta) {
-    const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
-    const cur = state.collection[ck];
-    const obj = (cur && typeof cur === 'object')
-      ? { ...cur }
-      : { normal: typeof cur === 'number' ? cur : 0, reverseHolo: 0, pokeball: 0, masterball: 0, prizestamped: 0 };
-    obj[variant] = Math.max(0, (obj[variant] || 0) + delta);
-    dispatch({ type: 'SET_COLLECTION', collection: { ...state.collection, [ck]: obj } });
-  }
-
-  function getVariantQty(card, variant) {
-    const val = state.collection[cardKey({ name: card.name, setCode: card.setCode, num: card.number })];
-    if (!val) return 0;
-    if (typeof val === 'number') return variant === 'normal' ? val : 0;
-    return val[variant] || 0;
   }
 
   function getCollectionQty(card) {
@@ -1207,23 +1306,13 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
       )}
 
       {selectedCard && (
-        <BrowseCardModal
-          card={selectedCard}
-          getVariantQty={getVariantQty}
-          setVariantQty={setVariantQty}
-          onClose={() => setSelectedCard(null)}
+        <CardTrackingModal
+          rc={{ name: selectedCard.name, setCode: selectedCard.setCode, num: selectedCard.number }}
+          api={selectedCard}
+          state={state}
           dispatch={dispatch}
-          wishlist={state.wishlist || []}
-          deckUsages={(() => {
-            const ck = cardKey({ name: selectedCard.name, setCode: selectedCard.setCode, num: selectedCard.number });
-            return state.decks
-              .filter(d => !d.isBuyList)
-              .flatMap(d => {
-                const rc = d.rawCards.find(r => cardKey(r) === ck);
-                if (!rc) return [];
-                return [{ deck: d, qty: rc.qty, owned: sumOwnedArr(d.ownedMap?.[ck], rc.qty) }];
-              });
-          })()}
+          getDeckOwned={getDeckOwned}
+          onClose={() => setSelectedCard(null)}
         />
       )}
     </div>
@@ -1278,445 +1367,6 @@ function SetTile({ s, setsMeta, setStats, onClick }) {
       </div>
       <div style={{ height: 4, background: 'var(--pill)', borderRadius: 2, overflow: 'hidden' }}>
         <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--green)' : 'var(--yellow)', borderRadius: 2, transition: 'width .3s' }} />
-      </div>
-    </div>
-  );
-}
-
-// ── Energy cost dots (used in BrowseCardModal attacks) ───────────────────────
-const ENERGY_COLOR = {
-  Fire:'#e8460a', Water:'#4a90d9', Grass:'#3a9a3a', Lightning:'#e8c200',
-  Psychic:'#9b59b6', Fighting:'#b87333', Darkness:'#555', Metal:'#8e9dad',
-  Dragon:'#7b68ee', Fairy:'#e91e8c', Colorless:'#aaa',
-};
-function TypeIcon({ type }) {
-  return (
-    <span style={{ display:'inline-block', width:14, height:14, borderRadius:'50%',
-      background: ENERGY_COLOR[type]||'#aaa', border:'1px solid rgba(255,255,255,.2)',
-      fontSize:7, color:'#fff', textAlign:'center', lineHeight:'14px', fontWeight:800 }}
-      title={type}>{type[0]}</span>
-  );
-}
-function EnergyCost({ cost }) {
-  if (!cost?.length) return null;
-  return (
-    <span style={{ display:'inline-flex', gap:2, verticalAlign:'middle', marginRight:4 }}>
-      {cost.map((type, i) => <TypeIcon key={i} type={type} />)}
-    </span>
-  );
-}
-
-// ── Browse Card Modal (card info + collection tracking + deck usage) ──────────
-function BrowseCardModal({ card, getVariantQty, setVariantQty, onClose, deckUsages = [], dispatch, wishlist = [] }) {
-  const [activeCard, setActiveCard] = useState(card);
-  const baseCardRef = useRef(card); // tracks the patched version of the original card
-  const [altPrints, setAltPrints] = useState([]);
-  const [loadingAlts, setLoadingAlts] = useState(false);
-  const [appearances, setAppearances] = useState([]);
-  const [loadingApps, setLoadingApps] = useState(false);
-  const [loadingAppCard, setLoadingAppCard] = useState(null); // id of appearance being loaded
-  const [decksOpen, setDecksOpen] = useState(true);
-  const [stampedCard, setStampedCard] = useState(null);
-  const [loadingStamped, setLoadingStamped] = useState(true);
-  const [prizePackPrice, setPrizePackPrice] = useState(null);
-
-  // Sync activeCard when parent changes the card prop (shouldn't happen, but safe)
-  useEffect(() => { setActiveCard(card); setAltPrints([]); }, [card?.id]);
-
-  // Other Appearances: every card featuring the same Pokédex number as whichever
-  // print is currently being viewed (displayCard), same as CardInfoModal.
-  const displayCardId = (activeCard || card)?.id;
-  const displayPokedex = (activeCard || card)?.nationalPokedexNumbers?.[0];
-  useEffect(() => {
-    const dc = activeCard || card;
-    if (!dc?.nationalPokedexNumbers?.length) { setAppearances([]); return; }
-    setLoadingApps(true);
-    fetchAllAppearances(dc.nationalPokedexNumbers).then(results => {
-      setAppearances(results);
-      setLoadingApps(false);
-    });
-  }, [displayCardId, displayPokedex]);
-
-  // Check Prize Pack lookup: same name + number exists as a Prize Pack Series card on TCGPlayer.
-  const normName = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-  const ppKey = normName(card.name) + '|' + card.number.replace(/^0+/, '');
-  const bundledPrizePrice = prizePackLookup[ppKey]; // number or null (entry exists = has prize pack)
-  const hasPrizePack = ppKey in prizePackLookup;
-
-  // Fetch live prize pack price via proxy (falls back to bundled price if unavailable)
-  useEffect(() => {
-    if (!hasPrizePack) return;
-    setPrizePackPrice(typeof bundledPrizePrice === 'number' ? bundledPrizePrice : null);
-    fetchPrizePackPrice(card.name, card.number).then(p => {
-      if (p != null) setPrizePackPrice(p);
-    });
-  }, [card.id, hasPrizePack]);
-
-  useEffect(() => {
-    setLoadingStamped(true);
-    setLoadingAlts(true);
-
-    function isPromoSet(p) {
-      const id = p.setId?.toLowerCase() ?? '';
-      const name = p.setName?.toLowerCase() ?? '';
-      return (
-        p.rarity === 'Promo' ||
-        id.includes('promo') ||
-        /p$/i.test(id) ||
-        name.includes('promo') ||
-        name.includes('prize') ||
-        p.stampedPrice != null
-      );
-    }
-
-    // Pass 1: strict (same HP + attacks) — also used for alt prints list
-    fetchAllPrints(card.name, {
-      supertype: card.supertype,
-      hp: card.hp,
-      attackNames: card.attacks,
-      attacksFull: card.attacksFull,
-    }).then(async prints => {
-      // Same-slot duplicate: different id, same set+number. Merge richer data, exclude from list.
-      const normNum = n => String(n || '').replace(/^0+/, '') || '0';
-      const sameSetAs = (a, b) =>
-        (a.setId && b.setId && a.setId === b.setId) ||
-        (a.setCode && b.setCode && a.setCode === b.setCode) ||
-        (a.setName && b.setName && a.setName === b.setName);
-      const isSameSlot = p =>
-        p.id !== card.id &&
-        normNum(p.number) === normNum(card.number) &&
-        sameSetAs(p, card);
-      const scoreCard = c => (c.rules?.length || 0) + (c.abilities?.length || 0) +
-        (c.attacksFull?.length || 0) + (c.nationalPokedexNumbers?.length || 0) +
-        (c.marketPrice != null ? 1 : 0);
-
-      const freshSelf = prints.find(p => p.id === card.id);
-      const sameSlot  = prints.find(isSameSlot);
-      const donor = (sameSlot && scoreCard(sameSlot) >= scoreCard(freshSelf || card))
-        ? sameSlot : (freshSelf || sameSlot);
-      if (donor) {
-        setActiveCard(prev => {
-          if (!prev || prev.id !== card.id) return prev;
-          const patched = {
-            ...prev,
-            rules:               donor.rules?.length               ? donor.rules               : (prev.rules || []),
-            abilities:           donor.abilities?.length            ? donor.abilities            : (prev.abilities || []),
-            attacksFull:         donor.attacksFull?.length          ? donor.attacksFull          : (prev.attacksFull || []),
-            attacks:             donor.attacks?.length              ? donor.attacks              : (prev.attacks || []),
-            nationalPokedexNumbers: donor.nationalPokedexNumbers?.length ? donor.nationalPokedexNumbers : (prev.nationalPokedexNumbers || []),
-          };
-          baseCardRef.current = patched;
-          return patched;
-        });
-      }
-
-      const altMap = new Map();
-      for (const p of prints) {
-        if (p.id === card.id || isSameSlot(p)) continue;
-        const key = `${normNum(p.number)}||${p.setId || p.setCode || p.setName}`;
-        const ex = altMap.get(key);
-        if (!ex || scoreCard(p) > scoreCard(ex)) altMap.set(key, p);
-      }
-      setAltPrints([...altMap.values()]);
-      setLoadingAlts(false);
-
-      let stamped = prints.find(p => p.id !== card.id && p.setId !== card.setId && isPromoSet(p));
-
-      // Pass 2: loose (name-only) — catches promos with slightly different stats
-      if (!stamped) {
-        const loose = await fetchAllPrints(card.name, { loose: true });
-        stamped = loose.find(p =>
-          p.id !== card.id &&
-          p.setId !== card.setId &&
-          isPromoSet(p) &&
-          (p.stampedPrice != null || p.rarity === 'Promo')
-        ) ?? null;
-      }
-
-      setStampedCard(stamped ?? null);
-      setLoadingStamped(false);
-    });
-  }, [card.id]);
-
-  // Prices — resolved from rawTcg (same card entry on TCGPlayer, different variant keys)
-  // via computeVariantPrices. stampedCard from fetchAllPrints is a fallback for sets where
-  // the stamped version is a separate API card entry entirely (some older promo sets).
-  const variantPrices = computeVariantPrices(card.rawTcg);
-  const prices = {
-    ...variantPrices,
-    // Live-fetched via proxy (falls back to bundled JSON price), then the precisely-matched
-    // rawTcg price, then the generic same-name-different-set fallback.
-    prizestamped: prizePackPrice ?? variantPrices.prizestamped ?? stampedCard?.marketPrice ?? stampedCard?.rawTcg?.holofoil?.market ?? null,
-  };
-
-  function isVariantAvailable(key) {
-    if (getVariantQty(card, key) > 0) return true; // always show if already tracked
-    if (key === 'normal') return true;
-    // Prize Pack lookup → immediate; API fallback after load
-    if (key === 'prizestamped') return hasPrizePack || prices.prizestamped != null || (!loadingStamped && stampedCard != null);
-    return prices[key] != null;
-  }
-
-  const visibleVariants = VARIANTS.filter(v => isVariantAvailable(v.key));
-  const collectionTotal = VARIANTS.reduce((s, v) => s + getVariantQty(card, v.key), 0);
-  const deckTotal = deckUsages.reduce((s, u) => s + u.owned, 0);
-  const total = collectionTotal + deckTotal;
-
-  const displayCard = activeCard || card;
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal"
-        style={{ maxWidth: 720, display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap' }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Left: card image */}
-        <ZoomableCardImage src={displayCard.imageLarge || displayCard.imageSmall} alt={displayCard.name} />
-
-        {/* Right: card info + collection tracking */}
-        <div style={{ flex: 1, minWidth: 220 }}>
-
-          {/* Name + HP */}
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-            <span style={{ fontFamily: "'Barlow Condensed',sans-serif", fontSize: 22, letterSpacing: .5, color: 'var(--yellow)' }}>{displayCard.name}</span>
-            {displayCard.hp && <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 700 }}>HP {displayCard.hp}</span>}
-          </div>
-
-          {/* Type line */}
-          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12 }}>
-            {displayCard.supertype}{displayCard.subtypes?.length ? ` — ${displayCard.subtypes.join(', ')}` : ''}
-          </div>
-
-          {/* Rules / card text (trainer effects, energy text, rule boxes) */}
-          {displayCard.rules?.length > 0 && displayCard.rules.map((rule, i) => {
-            const isRuleBox = /rule:/i.test(rule) || /you must/i.test(rule);
-            return (
-              <div key={i} style={{
-                marginBottom: 10, padding: '8px 10px',
-                background: isRuleBox ? 'rgba(245,166,35,.06)' : 'rgba(108,142,191,.06)',
-                border: `1px solid ${isRuleBox ? 'rgba(245,166,35,.2)' : 'rgba(108,142,191,.2)'}`,
-                borderRadius: 8,
-              }}>
-                {isRuleBox && (
-                  <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: .5 }}>
-                    Rule Box
-                  </div>
-                )}
-                <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.6 }}>{rule}</div>
-              </div>
-            );
-          })}
-
-          {/* Abilities */}
-          {displayCard.abilities?.map((ab, i) => (
-            <div key={i} style={{ marginBottom: 10, padding: '8px 10px', background: 'rgba(255,203,5,.06)', border: '1px solid rgba(255,203,5,.2)', borderRadius: 8 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--yellow)', marginBottom: 3 }}>
-                {ab.type}: {ab.name}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text)', lineHeight: 1.5 }}>{ab.text}</div>
-            </div>
-          ))}
-
-          {/* Attacks */}
-          {displayCard.attacksFull?.map((atk, i) => (
-            <div key={i} style={{ marginBottom: 10, padding: '8px 10px', background: 'var(--pill)', border: '1px solid var(--card-border)', borderRadius: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' }}>
-                <EnergyCost cost={atk.cost} />
-                <span style={{ fontWeight: 800, fontSize: 12 }}>{atk.name}</span>
-                {atk.damage && <span style={{ marginLeft: 'auto', fontWeight: 800, fontSize: 13, color: 'var(--text)' }}>{atk.damage}</span>}
-              </div>
-              {atk.text && <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5 }}>{atk.text}</div>}
-            </div>
-          ))}
-
-          {/* Weakness / Resistance / Retreat */}
-          {(displayCard.weaknesses?.length > 0 || displayCard.resistances?.length > 0 || displayCard.retreatCost != null) && (
-            <div style={{ display: 'flex', gap: 16, marginTop: 4, marginBottom: 12, fontSize: 11, color: 'var(--muted)', flexWrap: 'wrap' }}>
-              {displayCard.weaknesses?.map((w, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  Weakness: <TypeIcon type={w.type} /> <strong style={{ color: 'var(--text)' }}>{w.value}</strong>
-                </span>
-              ))}
-              {displayCard.resistances?.map((r, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  Resistance: <TypeIcon type={r.type} /> <strong style={{ color: 'var(--text)' }}>{r.value}</strong>
-                </span>
-              ))}
-              {displayCard.retreatCost != null && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                  Retreat: {displayCard.retreatCost === 0
-                    ? <strong style={{ color: 'var(--text)' }}>Free</strong>
-                    : Array.from({ length: displayCard.retreatCost }, (_, i) => <TypeIcon key={i} type="Colorless" />)}
-                </span>
-              )}
-            </div>
-          )}
-
-          {/* Set info */}
-          <div style={{ fontSize: 10, color: 'var(--muted)', borderTop: '1px solid var(--card-border)', paddingTop: 8, marginTop: 4, marginBottom: 12 }}>
-            <div>{displayCard.setName}{displayCard.number ? ` · #${displayCard.number}` : ''}{displayCard.rarity ? ` · ${displayCard.rarity}` : ''}</div>
-            {displayCard.regulationMark && <div style={{ marginTop: 2 }}>Regulation Mark: {displayCard.regulationMark}</div>}
-            {displayCard.marketPrice != null && (
-              <div style={{ marginTop: 4 }}>
-                <span style={{ color: 'var(--green)', fontWeight: 700 }}>${displayCard.marketPrice.toFixed(2)}</span>
-                {displayCard.reverseHoloPrice != null && (
-                  <span style={{ color: 'var(--muted)', marginLeft: 10 }}>Rev. Holo: ${displayCard.reverseHoloPrice.toFixed(2)}</span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Alt prints switcher */}
-          {(loadingAlts || altPrints.length > 0) && (
-            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--card-border)' }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                Other Prints{loadingAlts && ' …'}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ fontSize: 10, padding: '3px 8px', fontWeight: displayCard.id === card.id ? 800 : 400 }}
-                  onClick={() => setActiveCard(baseCardRef.current)}
-                >
-                  {card.setName} #{card.number}
-                  {card.marketPrice != null ? ` · $${card.marketPrice.toFixed(2)}` : ''}
-                </button>
-                {altPrints.map(p => (
-                  <button
-                    key={p.id}
-                    className="btn btn-ghost btn-sm"
-                    style={{ fontSize: 10, padding: '3px 8px', fontWeight: p.id === displayCard.id ? 800 : 400 }}
-                    onClick={() => setActiveCard(p)}
-                  >
-                    {p.setName} #{p.number}
-                    {p.marketPrice != null ? ` · $${p.marketPrice.toFixed(2)}` : ''}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* All {Pokémon} cards — every card featuring the same Pokédex number, including this one */}
-          {(loadingApps || appearances.length > 0) && (
-            <div style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--card-border)' }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: 'var(--muted)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1 }}>
-                All {displayCard.name} cards{loadingApps && ' …'}
-              </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {appearances.map(p => (
-                  <button
-                    key={p.id}
-                    title={`${p.name}\n${p.setName} #${p.number}`}
-                    style={{
-                      background: 'none', borderRadius: 6,
-                      border: `2px solid ${p.id === displayCard.id ? 'var(--orange)' : 'transparent'}`,
-                      padding: 0, cursor: loadingAppCard === p.id ? 'wait' : 'pointer',
-                      opacity: loadingAppCard && loadingAppCard !== p.id ? 0.5 : 1,
-                      transition: 'border-color .15s',
-                    }}
-                    onMouseEnter={e => { if (!loadingAppCard && p.id !== displayCard.id) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = p.id === displayCard.id ? 'var(--orange)' : 'transparent'; }}
-                    onClick={async () => {
-                      if (loadingAppCard) return;
-                      setLoadingAppCard(p.id);
-                      const full = await lookupCard(p.setCode, p.number, p.name);
-                      setLoadingAppCard(null);
-                      if (full) setActiveCard(full);
-                    }}
-                  >
-                    {p.imageSmall
-                      ? <img src={p.imageSmall} alt={p.name} style={{ width: 56, borderRadius: 4, display: 'block' }} loading="lazy" />
-                      : <div style={{ width: 56, height: 78, background: 'var(--pill)', borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, color: 'var(--muted)' }}>{p.name}</div>
-                    }
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Collection tracking (always based on the original `card`) */}
-          <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
-            Track in Collection
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>
-            Total owned: <span style={{ color: 'var(--yellow)' }}>×{total}</span>
-            {collectionTotal > 0 && deckTotal > 0 && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400, marginLeft: 8 }}>
-                ({collectionTotal} collection · {deckTotal} in decks)
-              </span>
-            )}
-          </div>
-
-          {visibleVariants.map(({ key, label }) => {
-            const qty = getVariantQty(card, key);
-            const price = prices[key];
-            const priceLoading = key === 'prizestamped' && card.stampedPrice == null && loadingStamped;
-            return (
-              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <span style={{ flex: 1, fontSize: 12, fontWeight: qty > 0 ? 800 : 400, color: qty > 0 ? 'var(--text)' : 'var(--muted)' }}>{label}</span>
-                <span style={{ fontSize: 10, color: price != null ? 'var(--green)' : 'var(--muted)', minWidth: 44, textAlign: 'right' }}>
-                  {priceLoading ? '…' : price != null ? `$${price.toFixed(2)}` : '—'}
-                </span>
-                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, -1)}>−</button>
-                <span style={{ fontFamily: "'Outfit',sans-serif", fontWeight: 700, fontSize: 13, minWidth: 20, textAlign: 'center', color: qty > 0 ? 'var(--green)' : 'var(--muted)' }}>×{qty}</span>
-                <button className="btn btn-ghost btn-xs" style={{ width: 26, height: 26, padding: 0, justifyContent: 'center', fontSize: 16 }} onClick={() => setVariantQty(card, key, 1)}>+</button>
-              </div>
-            );
-          })}
-
-          {/* Deck usage section */}
-          {deckUsages.length > 0 && (
-            <div style={{ marginTop: 12, borderTop: '1px solid var(--card-border)', paddingTop: 12 }}>
-              <button
-                onClick={() => setDecksOpen(o => !o)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: 'var(--fg)', cursor: 'pointer', padding: 0, marginBottom: decksOpen ? 8 : 0, width: '100%', textAlign: 'left' }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 800 }}>In Decks</span>
-                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 400 }}>({deckUsages.length})</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)' }}>{decksOpen ? '▲' : '▼'}</span>
-              </button>
-              {decksOpen && deckUsages.map(({ deck, qty, owned }) => {
-                const allOwned = owned >= qty;
-                return (
-                  <div key={deck.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: 6, marginBottom: 4, background: 'var(--darker)' }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>{deck.name}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>needs ×{qty}</span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: allOwned ? 'var(--green)' : 'var(--orange)' }}>
-                        {owned}/{qty} owned
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <div className="modal-actions" style={{ paddingLeft: 0, paddingRight: 0 }}>
-            <button className="btn btn-ghost" onClick={onClose}>Done</button>
-            {(() => {
-              const ck = cardKey({ name: card.name, setCode: card.setCode, num: card.number });
-              const onWishlist = wishlist.some(w => cardKey(w) === ck);
-              return (
-                <button
-                  className={`btn btn-sm ${onWishlist ? 'btn-yellow' : 'btn-ghost'}`}
-                  onClick={() => onWishlist
-                    ? dispatch({ type: 'REMOVE_WISHLIST', ck })
-                    : dispatch({ type: 'ADD_WISHLIST', item: { name: card.name, setCode: card.setCode, num: card.number, qty: 1 } })
-                  }
-                >
-                  {onWishlist ? '★ Wishlisted' : '☆ Wishlist'}
-                </button>
-              );
-            })()}
-            {displayCard.tcgplayerUrl && (
-              <a href={displayCard.tcgplayerUrl} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">
-                TCGPlayer ↗
-              </a>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
@@ -1858,7 +1508,7 @@ function WishlistTab({ state, dispatch, getApiData, getDeckOwned, onCardClick })
         return (
           <div key={ck} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: '9px 12px', marginBottom: 6 }}>
             {api?.imageSmall
-              ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, own: 0, api, decks: [] })} />
+              ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, api })} />
               : <div style={{ width: 30, height: 42, background: 'var(--pill)', borderRadius: 3 }} />
             }
             <div style={{ flex: 1 }}>
@@ -1892,7 +1542,7 @@ function WishlistTab({ state, dispatch, getApiData, getDeckOwned, onCardClick })
                 return (
                   <div key={cardKey(rc)} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--card-bg)', border: '1px solid var(--card-border)', borderRadius: 10, padding: '9px 12px', marginBottom: 6 }}>
                     {api?.imageSmall
-                      ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, own: getDeckOwned(deck, rc), api, decks: [deck.name] })} />
+                      ? <img src={api.imageSmall} alt="" style={{ width: 30, height: 42, objectFit: 'cover', borderRadius: 3, cursor: 'pointer' }} onClick={() => api && onCardClick({ rc, api })} />
                       : <div style={{ width: 30, height: 42, background: 'var(--pill)', borderRadius: 3 }} />
                     }
                     <div style={{ flex: 1 }}>
