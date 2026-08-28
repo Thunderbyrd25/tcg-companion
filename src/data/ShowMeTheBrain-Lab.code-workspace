@@ -1,0 +1,23 @@
+{
+	"folders": [
+		{
+			"path": "../../../ShowMeTheBrain-Lab"
+		},
+		{
+			"path": "../../../ShowMeTheBrainWeb"
+		},
+		{
+			"path": "../../../chimera"
+		},
+		{
+			"path": "../../../2026-wip-game"
+		},
+		{
+			"path": "../../../smtb-aws"
+		},
+		{
+			"path": "../.."
+		}
+	],
+	"settings": {}
+}

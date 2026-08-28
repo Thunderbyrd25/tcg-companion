@@ -256,22 +256,20 @@ function CardTrackingModal({ rc, api, state, dispatch, getDeckOwned, onClose }) 
       );
     }
 
+    // Only the strict (same HP + attacks) pass -- a "loose" name-only fallback used to
+    // run here too, but the same card name gets reused across eras (e.g. "Umbreon ex"
+    // exists as both a 2003 EX-era print and an unrelated 2025 Prismatic Evolutions
+    // print), and matching by name alone attributed a completely different card's
+    // stamped price to whichever print didn't have its own. Scrydex's per-card variant
+    // data (computeVariantPrices, above) already covers real same-card stamps directly,
+    // so this is just a narrow fallback for genuinely separate promo API entries now.
     fetchAllPrints(api.name, {
       supertype: api.supertype,
       hp: api.hp,
       attackNames: api.attacks,
       attacksFull: api.attacksFull,
-    }).then(async prints => {
-      let stamped = prints.find(p => p.id !== api.id && p.setId !== api.setId && isPromoSet(p));
-      if (!stamped) {
-        const loose = await fetchAllPrints(api.name, { loose: true });
-        stamped = loose.find(p =>
-          p.id !== api.id &&
-          p.setId !== api.setId &&
-          isPromoSet(p) &&
-          (p.stampedPrice != null || p.rarity === 'Promo')
-        ) ?? null;
-      }
+    }).then(prints => {
+      const stamped = prints.find(p => p.id !== api.id && p.setId !== api.setId && isPromoSet(p));
       setStampedCard(stamped ?? null);
       setLoadingStamped(false);
     });
