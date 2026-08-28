@@ -117,7 +117,7 @@ export function formatDeckList(rawCards) {
 
 // PTCG Live exports some promo sets under different codes than pokemontcg.io / ALL_SETS.
 // Normalize these before era index lookups so XYP/BWP are found correctly.
-const PROMO_CODE_ALIASES = {
+export const PROMO_CODE_ALIASES = {
   'XYP':   'PR-XY',
   'BWP':   'PR-BLW',
   'SMP':   'PR-SM',

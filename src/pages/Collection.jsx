@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality, effectiveRegMark, STANDARD_MIN_MARK, SET_MIN_MARK, getEraMinMark, getEraPromoAllowances } from '../utils/cards';
+import { cardKey, getSection, supertypeToSection, checkLegality, checkEraLegality, effectiveRegMark, STANDARD_MIN_MARK, SET_MIN_MARK, getEraMinMark, getEraPromoAllowances, PROMO_CODE_ALIASES } from '../utils/cards';
 
 import { parseRawLines } from '../utils/cards';
 import { useToast } from '../components/Toast';
@@ -390,6 +390,12 @@ function CardTrackingModal({ rc, api, state, dispatch, getDeckOwned, onClose }) 
 const SET_ORDER = (() => {
   const m = {};
   [...ALL_SETS].reverse().forEach((s, i) => { m[s.code] = i; });
+  // A card's own setCode sometimes doesn't match ALL_SETS' canonical code for the same
+  // set (e.g. Scrydex returns "SVP" for the set ALL_SETS tracks as "PR-SV") -- alias it
+  // to the same index so sort-by-set doesn't treat it as an unrecognized/ancient set.
+  for (const [alias, canonical] of Object.entries(PROMO_CODE_ALIASES)) {
+    if (m[canonical] != null && m[alias] == null) m[alias] = m[canonical];
+  }
   return m;
 })();
 
