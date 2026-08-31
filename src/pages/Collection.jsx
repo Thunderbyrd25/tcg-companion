@@ -61,8 +61,19 @@ function QtyBar({ rc, state, dispatch, style }) {
 // any remaining variant key containing "stamp" whose `origin` text (Scrydex's own
 // human-readable description of the variant, e.g. "Prize Pack Series Cards" or
 // "Yuka Furusawa - Power Cottonweed - 2010 World Championships Deck") matches the
-// pattern -- checked in array order, first match wins, so put specific patterns before
-// the gymstamped catch-all.
+// pattern. `stampMatch` is the same idea but gets both the raw key name and the origin
+// text, since Scrydex's `origin` strings are free-text and inconsistent across 20+ years
+// of promos (typos, missing text, differing formats per year) while the *key name* is
+// consistent -- e.g. a Regional Championships staff stamp is always keyed
+// `...staffStamp`/`staffStamp`, never the reverse, even when its origin text is null or
+// oddly worded. Checked in array order, first match wins, so put specific patterns
+// before the generic staff/non-staff catch-alls at the end.
+//
+// IMPORTANT: staff and non-staff versions of the same event are always two separate,
+// wildly different-priced real cards (e.g. Regional Championships staff vs. attendee
+// stamps routinely differ 10-50x in price) -- never fold them into one bucket, or
+// whichever key Object.keys() happens to iterate first silently wins and the other
+// variant's price (and the ability to track it) disappears entirely.
 const VARIANTS = [
   // Standard treatments
   { key: 'normal',        label: 'Normal' },
@@ -82,16 +93,47 @@ const VARIANTS = [
   { key: 'unlimHolo',     label: 'Unlimited Holofoil', keys: ['unlimitedHolofoil'] },
   { key: 'unlimNormal',   label: 'Unlimited Non-Holo', keys: ['unlimited'] },
   { key: 'unlimShadowless', label: 'Unlimited Shadowless', keys: ['unlimitedShadowless'] },
-  // Promo / stamped -- classified by origin text, in priority order.
+  // Promo / stamped -- classified by key name + origin text, in priority order.
   // worldchamp uses originMatch (no key-name requirement) because World Championship Deck
   // variants are keyed by the competitor's name (e.g. "yukaFurusawa"), not anything
   // containing "stamp" -- the others really are always "...Stamp"-named keys in practice,
-  // so stampOrigin keeps that requirement to avoid the gymstamped catch-all grabbing
+  // so stampOrigin/stampMatch keep that requirement to avoid the catch-alls grabbing
   // unrelated variants that happen to have some origin text.
   { key: 'prizestamped',  label: 'Prize Stamped', stampOrigin: /prize pack/i },
+  // World Championships staff stamps are commonly stored under the *generic* staffStamp
+  // key with origin text like "2014 World Championships" (no literal "Staff" in the text) --
+  // must be claimed before the plain 'worldchamp' entry below, or its originMatch (which
+  // has no staff/key restriction, since named-competitor-deck variants aren't "stamp" keys)
+  // grabs it and the staff/non-staff distinction is lost.
+  { key: 'worldchampStaff', label: 'World Championship Staff', stampMatch: (k, o) => /staff/i.test(k) && /world championships?/i.test(o || '') },
   { key: 'worldchamp',    label: 'World Championship', originMatch: /world championship/i },
-  { key: 'prerelease',    label: 'Pre-Release', stampOrigin: /pre-?release/i },
-  { key: 'gymstamped',    label: 'Gym / League Stamped', stampOrigin: /.*/ }, // catch-all: any other stamp
+  // Regional Championships: Scrydex uses both a dedicated key (regionalChampionshipsStamp/
+  // -StaffStamp) and, for many older/other prints, the generic leagueStamp/staffStamp keys
+  // with "Regional Championships" in the origin text -- match either form, staff first.
+  { key: 'regionalStaff', label: 'Regional Championships Staff',
+    stampMatch: (k, o) => /^regionalchampionshipsstaffstamp$/i.test(k) || (/staff/i.test(k) && /regional championships?/i.test(o || '')) },
+  { key: 'regional',      label: 'Regional Championships',
+    stampMatch: (k, o) => /^regionalchampionshipsstamp$/i.test(k) || /regional championships?/i.test(o || '') },
+  { key: 'leagueCupStaff', label: 'League Cup Staff', stampMatch: k => /^leaguecupstaffstamp$/i.test(k) },
+  { key: 'leagueCup',      label: 'League Cup', stampMatch: k => /^leaguecupstamp$/i.test(k) },
+  { key: 'league1st', label: 'League Champ. — 1st Place', keys: ['league1stPlaceStamp'] },
+  { key: 'league2nd', label: 'League Champ. — 2nd Place', keys: ['league2ndPlaceStamp'] },
+  { key: 'league3rd', label: 'League Champ. — 3rd Place', keys: ['league3rdPlaceStamp'] },
+  { key: 'league4th', label: 'League Champ. — 4th Place', keys: ['league4thPlaceStamp'] },
+  // Same as World Championships above: staff prerelease stamps are usually the generic
+  // staffStamp key with origin "<Set Name> Prerelease" (no literal "Staff" in the text),
+  // not the dedicated prereleaseStaffStamp key -- staff-ness must come from the key name,
+  // and the plain 'prerelease' entry must explicitly exclude staff-keyed matches or it
+  // grabs these first via its origin-text fallback.
+  { key: 'prereleaseStaff', label: 'Pre-Release Staff',
+    stampMatch: (k, o) => /^prereleasestaffstamp$/i.test(k) || (/staff/i.test(k) && /prerelease/i.test(o || '')) },
+  { key: 'prerelease',      label: 'Pre-Release',
+    stampMatch: (k, o) => !/staff/i.test(k) && (/^prereleasestamp$/i.test(k) || /pre-?release/i.test(o || '')) },
+  // Catch-alls: anything stamped that didn't match a specific category above, still split
+  // by staff vs. non-staff so an unrecognized staff variant never gets buried under (or
+  // overwritten by) its much cheaper non-staff counterpart.
+  { key: 'eventStaffStamped', label: 'Event Staff Stamped', stampMatch: k => /staff/i.test(k) },
+  { key: 'gymstamped',        label: 'Event Stamped', stampMatch: () => true },
 ];
 
 // Resolves every VARIANTS entry to a market price from a card's tcgplayer.prices object.
@@ -111,6 +153,10 @@ function computeVariantPrices(rawTcg) {
       );
     } else if (v.originMatch) {
       foundKey = Object.keys(rawTcg || {}).find(k => !claimed.has(k) && v.originMatch.test(rawTcg[k]?.origin || ''));
+    } else if (v.stampMatch) {
+      foundKey = Object.keys(rawTcg || {}).find(k =>
+        !claimed.has(k) && /stamp/i.test(k) && v.stampMatch(k, rawTcg[k]?.origin || '')
+      );
     }
     out[v.key] = foundKey ? rawTcg[foundKey].market : null;
     if (foundKey) claimed.add(foundKey);
