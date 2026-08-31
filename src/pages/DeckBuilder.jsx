@@ -10,6 +10,15 @@ import { isBannedIn } from '../data/bans';
 
 const FORMATS = ['Standard', 'Expanded', 'GLC', 'Eternal', 'Era', 'Custom'];
 
+// "2002/09/15" -> "Sep 2002" (release dates come from Scrydex in Y/M/D form; the
+// old plain YYYY/MM slice read as a confusing second date, not a month name)
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatSetDate(releaseDate) {
+  if (!releaseDate) return '';
+  const [y, m] = releaseDate.split('/');
+  return `${MONTH_ABBR[parseInt(m, 10) - 1] || ''} ${y}`;
+}
+
 // Oldest set = 0, newer sets = higher values (ALL_SETS is newest-first, so reverse for chrono order)
 const SET_ORDER_MAP = (() => {
   const m = {};
@@ -495,7 +504,7 @@ export default function DeckBuilder({ onBack }) {
                             </div>
                             <div>
                               <div style={{ fontWeight: 800, fontSize: 11 }}>{s.name}</div>
-                              <div style={{ fontSize: 9, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${meta.releaseDate.slice(0,7)}` : ''}</div>
+                              <div style={{ fontSize: 9, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${formatSetDate(meta.releaseDate)}` : ''}</div>
                             </div>
                           </div>
                           {meta.logo && (

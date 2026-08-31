@@ -1325,6 +1325,15 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
 }
 
 // ── Set Tile ──────────────────────────────────────────────────────────────────
+// "2002/09/15" -> "Sep 2002" (release dates come from Scrydex in Y/M/D form; the
+// old plain YYYY/MM slice read as a confusing second date, not a month name)
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function formatSetDate(releaseDate) {
+  if (!releaseDate) return '';
+  const [y, m] = releaseDate.split('/');
+  return `${MONTH_ABBR[parseInt(m, 10) - 1] || ''} ${y}`;
+}
+
 function SetTile({ s, setsMeta, setStats, onClick }) {
   const meta = setsMeta[s.id] || {};
   const stats = setStats[s.id] || { owned: 0, value: 0 };
@@ -1345,7 +1354,7 @@ function SetTile({ s, setsMeta, setStats, onClick }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{s.name}</div>
-          <div style={{ fontSize: 10, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${meta.releaseDate.slice(0,7)}` : ''}</div>
+          <div style={{ fontSize: 10, color: 'var(--muted)' }}>{s.code}{meta.releaseDate ? ` · ${formatSetDate(meta.releaseDate)}` : ''}</div>
         </div>
       </div>
       {meta.logo && (
