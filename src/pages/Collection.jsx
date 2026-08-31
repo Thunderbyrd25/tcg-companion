@@ -403,7 +403,7 @@ const FORMAT_FILTERS = ['All', 'Standard', 'Expanded', 'GLC', 'Eternal'];
 
 function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiData, getDeckOwned, dispatch, onCardClick }) {
   const [sort, setSort] = useState('set-new');
-  const [showUnowned, setShowUnowned] = useState(false);
+  const [showUnowned, setShowUnowned] = useState(true);
   const [setFilter, setSetFilter] = useState('');
   const [formatFilter, setFormatFilter] = useState('All');
   const [eraFilter, setEraFilter] = useState('');
@@ -492,12 +492,13 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
     return () => { cancelled = true; };
   }, [showUnowned, setFilter]);
 
-  // When showUnowned is on with no set filter, fetch ALL sets oldest-first in background
+  // When showUnowned is on with no set filter, fetch ALL sets newest-first in background
+  // (ALL_SETS is already newest-first) -- otherwise the list fills in with decades-old
+  // vintage cards first while the recent ones users actually care about lag behind.
   useEffect(() => {
     if (!showUnowned || setFilter) return;
     if (fetchingRef.current) return;
-    const allSetsOldestFirst = [...ALL_SETS].reverse(); // ALL_SETS is newest-first
-    const toFetch = allSetsOldestFirst.filter(s => s.id && !fetchedSetsRef.current.has(s.code));
+    const toFetch = ALL_SETS.filter(s => s.id && !fetchedSetsRef.current.has(s.code));
     if (!toFetch.length) return;
     fetchingRef.current = true;
     setLoadingSet(true);
