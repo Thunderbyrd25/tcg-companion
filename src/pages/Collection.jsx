@@ -864,10 +864,48 @@ function BrowseTab({ state, dispatch, getDeckOwned }) {
   const [browseEraCode, setBrowseEraCode] = useState('');
   const [browseSort, setBrowseSort] = useState('set-new');
   const searchTimer = useRef(null);
+  const fetchingSetPricesRef = useRef(false);
+  const fetchedSetPricesRef = useRef(new Set());
 
   const BROWSE_EXPANDED_ERAS = new Set(['BW', 'XY', 'SM', 'SWSH', 'SV', 'ME']);
 
   useEffect(() => { fetchSetsMetadata().then(setSetsMeta); }, []);
+
+  // Progressively fetch every set's cards (newest-first) while the grid is showing, so
+  // each tile's total value fills in on its own instead of staying blank/partial until
+  // the user manually browses into that specific set.
+  useEffect(() => {
+    if (selectedSet) return;
+    if (fetchingSetPricesRef.current) return;
+    const toFetch = ALL_SETS.filter(s => s.id && !fetchedSetPricesRef.current.has(s.code));
+    if (!toFetch.length) return;
+    fetchingSetPricesRef.current = true;
+    let cancelled = false;
+    (async () => {
+      const BATCH = 4;
+      for (let i = 0; i < toFetch.length; i += BATCH) {
+        if (cancelled) break;
+        const batch = toFetch.slice(i, i + BATCH);
+        await Promise.all(batch.map(async s => {
+          try {
+            const { cards } = await searchCards(null, s.id, 1);
+            if (cards.length) {
+              const updates = {};
+              for (const card of cards) {
+                const ck = cardKey({ name: card.name, setCode: card.setCode || s.code, num: card.number });
+                updates[ck] = { ...card, setCode: card.setCode || s.code };
+              }
+              dispatch({ type: 'SET_API_DATA', updates });
+            }
+            fetchedSetPricesRef.current.add(s.code);
+          } catch {}
+        }));
+        if (i + BATCH < toFetch.length) await new Promise(r => setTimeout(r, 250));
+      }
+      fetchingSetPricesRef.current = false;
+    })();
+    return () => { cancelled = true; fetchingSetPricesRef.current = false; };
+  }, [selectedSet]);
 
   // When a set is selected, auto-load its cards
   useEffect(() => {
