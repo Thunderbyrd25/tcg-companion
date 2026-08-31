@@ -99,7 +99,15 @@ const VARIANTS = [
   // containing "stamp" -- the others really are always "...Stamp"-named keys in practice,
   // so stampOrigin/stampMatch keep that requirement to avoid the catch-alls grabbing
   // unrelated variants that happen to have some origin text.
-  { key: 'prizestamped',  label: 'Prize Stamped', stampOrigin: /prize pack/i },
+  // Prize Pack stamps come as separate non-holo/holo cards (playPokemonStamp vs.
+  // -Holofoil) -- match the non-holo key explicitly first so it doesn't also
+  // absorb the holo one, which used to silently disappear and, after the
+  // staff/non-staff catch-all split above, started leaking out as a
+  // meaningless "Event Stamped" entry instead.
+  { key: 'prizestamped',           label: 'Prize Stamped', stampMatch: k => /^playpokemonstamp$/i.test(k) },
+  { key: 'prizestampedHolo',       label: 'Prize Stamped Holofoil', stampMatch: k => /^playpokemonstampholofoil$/i.test(k) },
+  { key: 'prizestampedReverseHolo', label: 'Prize Stamped Reverse Holo', stampMatch: (k, o) => /^playpokemonstampreverseholofoil$/i.test(k) && /prize pack/i.test(o || '') },
+  { key: 'leagueThankYou',         label: 'League "Thank You" Stamp', stampMatch: k => /^playpokemonthankyoustamp$/i.test(k) },
   // World Championships staff stamps are commonly stored under the *generic* staffStamp
   // key with origin text like "2014 World Championships" (no literal "Staff" in the text) --
   // must be claimed before the plain 'worldchamp' entry below, or its originMatch (which
