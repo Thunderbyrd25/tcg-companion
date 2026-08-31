@@ -186,19 +186,11 @@ function buildAllGroups(regular) {
 
 const SECTION_ORDER = ['Pokemon', 'Trainer', 'Energy', 'Other'];
 
-function calcCols(total) {
-  let bestCols = Math.min(total, 10);
-  let bestLeftover = Infinity;
-  for (let c = 6; c <= Math.min(total, 13); c++) {
-    const leftover = total % c === 0 ? 0 : c - (total % c);
-    if (leftover < bestLeftover) { bestLeftover = leftover; bestCols = c; }
-  }
-  return bestCols;
-}
+const REC_DECK_COLS = 10;
 
 function RecDeckViewer({ rec, color, onAdd, onClose }) {
   const rawCards = rec.raw ? parseRawLines(rec.raw) : [];
-  const cols = calcCols(rawCards.length);
+  const cols = REC_DECK_COLS;
 
   const [cardImgs, setCardImgs] = useState(() => rawCards.map(rc => ({ rc, img: null })));
   const [loading, setLoading] = useState(true);
@@ -233,7 +225,7 @@ function RecDeckViewer({ rec, color, onAdd, onClose }) {
           </p>
         )}
 
-        {/* Card grid — fixed columns from parse so size never changes while loading */}
+        {/* Card grid — always 10 columns wide, regardless of deck size */}
         <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 8, marginBottom: 20 }}>
           {cardImgs.map(({ rc, img }, i) => (
             <div key={i} style={{ position: 'relative' }}>

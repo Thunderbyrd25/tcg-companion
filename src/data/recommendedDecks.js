@@ -227,7 +227,7 @@ Energy: 11
     },
     {
       name: 'Henry Chao\'s Final Gardevoir ex',
-      notes: 'Legendary player Henry Chao, known for revolutionizing Gardevoir ex took this Gardevoir ex list to the 2026 Orlando Regional, his final run with Gardi before it rotated out of the standard format.\nSource:https://limitlesstcg.com/decks/list/25655\nVOD: www.youtube.com/watch?v=8zD0FbC5a90&t=196m54s',
+      notes: 'Legendary player Henry Chao, known for revolutionizing Gardevoir ex took this Gardevoir ex list to the 2026 Orlando Regional, his final run with Gardi before it rotated out of the standard format.\nSource:https://limitlesstcg.com/decks/list/25655\nVOD: https://www.youtube.com/watch?v=8zD0FbC5a90&t=11814s',
       splash: { name: 'Gardevoir ex', setCode: 'SVI' },
       raw: `Pokémon: 16
 3 Ralts MEG 58
