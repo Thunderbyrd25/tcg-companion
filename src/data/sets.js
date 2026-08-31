@@ -156,10 +156,9 @@ export const ALL_SETS = [
   {code:'N3',name:'Neo Revelation',id:'neo3',era:'Neo'},
   {code:'N2',name:'Neo Discovery',id:'neo2',era:'Neo'},
   {code:'N1',name:'Neo Genesis',id:'neo1',era:'Neo'},
-  // ── Gym ───────────────────────────────────────────────────────────────────────
-  {code:'G2',name:'Gym Challenge',id:'gym2',era:'Gym'},
-  {code:'G1',name:'Gym Heroes',id:'gym1',era:'Gym'},
-  // ── Base ──────────────────────────────────────────────────────────────────────
+  // ── Base (includes Gym Heroes/Challenge, which fit chronologically here) ───────
+  {code:'G2',name:'Gym Challenge',id:'gym2',era:'Base'},
+  {code:'G1',name:'Gym Heroes',id:'gym1',era:'Base'},
   {code:'TR',name:'Team Rocket',id:'base5',era:'Base'},
   {code:'B2',name:'Base Set 2',id:'base4',era:'Base'},
   {code:'BS2',name:'Base Set 2',id:'base4',era:'Base'},

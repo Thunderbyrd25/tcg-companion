@@ -841,7 +841,7 @@ function CardsTab({ search, setSearch, typeFilter, setTypeFilter, state, getApiD
   );
 }
 
-const ERA_CANONICAL_ORDER = ['ME', 'SV', 'SWSH', 'SM', 'XY', 'BW', 'HGSS', 'DP', 'Platinum', 'EX', 'ECard', 'Neo', 'Gym', 'Base'];
+const ERA_CANONICAL_ORDER = ['ME', 'SV', 'SWSH', 'SM', 'XY', 'BW', 'HGSS', 'DP', 'Platinum', 'EX', 'ECard', 'Neo', 'Base'];
 
 // ── Browse Tab ────────────────────────────────────────────────────────────────
 function BrowseTab({ state, dispatch, getDeckOwned }) {

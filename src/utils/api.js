@@ -46,7 +46,7 @@ const cache = new Map();
 
 // Persist card cache to localStorage so it survives page reloads
 const CACHE_KEY = 'tcg_card_cache';
-const CACHE_VERSION = 19;
+const CACHE_VERSION = 20;
 
 (function hydrateCache() {
   try {
@@ -116,14 +116,21 @@ function findStampedPrice(tcg) {
   return key ? tcg[key].market ?? null : null;
 }
 
+// Preferred order for a card's headline price; vintage/WOTC-era cards don't have a
+// "holofoil"/"normal" variant at all -- they're priced as unlimited/1st-edition/
+// shadowless instead -- so fall back to whatever price actually exists rather than
+// silently returning null (which was making entire vintage sets show $0 total value).
+const PRICE_KEY_PRIORITY = ['holofoil', 'normal', '1stEditionHolofoil', 'reverseHolofoil', 'unlimited', 'unlimitedHolofoil', 'firstEdition', 'firstEditionHolofoil', 'unlimitedShadowless', 'firstEditionShadowless'];
+function pickMarketPrice(tcg) {
+  if (!tcg) return null;
+  for (const k of PRICE_KEY_PRIORITY) if (tcg[k]?.market != null) return tcg[k].market;
+  const anyKey = Object.keys(tcg).find(k => tcg[k]?.market != null);
+  return anyKey ? tcg[anyKey].market : null;
+}
+
 export function parseCard(c) {
   const tcg = c.tcgplayer?.prices;
-  const marketPrice =
-    tcg?.holofoil?.market ??
-    tcg?.normal?.market ??
-    tcg?.['1stEditionHolofoil']?.market ??
-    tcg?.reverseHolofoil?.market ??
-    null;
+  const marketPrice = pickMarketPrice(tcg);
   return {
     id: c.id,
     name: c.name,
@@ -287,7 +294,7 @@ export async function lookupCard(setCode, num, cardName) {
 
 // Fetch and cache set metadata (logos, totals, release dates)
 const SETS_META_KEY = 'tcg_sets_meta';
-const SETS_META_VERSION = 5;
+const SETS_META_VERSION = 6;
 let setsMetaCache = null;
 
 export async function fetchSetsMetadata() {
@@ -300,12 +307,19 @@ export async function fetchSetsMetadata() {
     }
   } catch {}
   try {
-    const res = await fetch(`https://api.pokemontcg.io/v2/sets?orderBy=-releaseDate&pageSize=250`, { headers: headers() });
+    const setsUrl = USE_LEGACY_PTCGIO ? 'https://api.pokemontcg.io/v2/sets' : '/api/sets';
+    const res = await fetch(`${setsUrl}?orderBy=-releaseDate&pageSize=250`, { headers: headers() });
     if (res.ok) {
       const d = await res.json();
       const data = {};
       for (const s of (d.data || [])) {
         data[s.id] = { id: s.id, name: s.name, logo: s.images?.logo || '', symbol: s.images?.symbol || '', total: s.total || s.printedTotal || 0, releaseDate: s.releaseDate || '', ptcgoCode: s.ptcgoCode || '' };
+      }
+      // 'mee' (Mega Evolution Energy) isn't a real Scrydex/TCGPlayer product, so our
+      // backend has no row for it at all -- borrow Scarlet & Violet Energies' logo since
+      // it's the same idea (a basic-energy-only promo release) for the current era.
+      if (!data.mee && data.sve) {
+        data.mee = { id: 'mee', name: 'Mega Evolution Energy', logo: data.sve.logo, symbol: data.sve.symbol, total: 8, releaseDate: '', ptcgoCode: 'MEE' };
       }
       setsMetaCache = data;
       try { localStorage.setItem(SETS_META_KEY, JSON.stringify({ v: SETS_META_VERSION, data })); } catch {}
