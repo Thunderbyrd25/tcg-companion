@@ -233,13 +233,13 @@ export default function CardDetailContent({ card, onCardChange }) {
                 title={`${p.name}\n${p.setName} #${p.number}`}
                 style={{
                   background: 'none', borderRadius: 6,
-                  border: `2px solid ${p.id === card.id ? 'var(--orange)' : 'transparent'}`,
+                  border: `4px solid ${p.id === card.id ? '#fff' : 'transparent'}`,
                   padding: 0, cursor: loadingAppCard === p.id ? 'wait' : 'pointer',
                   opacity: loadingAppCard && loadingAppCard !== p.id ? 0.5 : 1,
                   transition: 'border-color .15s',
                 }}
                 onMouseEnter={e => { if (!loadingAppCard && p.id !== card.id) e.currentTarget.style.borderColor = 'var(--yellow)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = p.id === card.id ? 'var(--orange)' : 'transparent'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = p.id === card.id ? '#fff' : 'transparent'; }}
                 onClick={async () => {
                   if (loadingAppCard) return;
                   setLoadingAppCard(p.id);
